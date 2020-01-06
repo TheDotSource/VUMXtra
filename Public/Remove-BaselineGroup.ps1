@@ -1,54 +1,72 @@
 function Remove-BaselineGroup {
     <#
     .SYNOPSIS
-        This function removes a baseline group from a VUM instance.
+        Removes a baseline group from a VUM instance.
+
     .DESCRIPTION
-        This function is part of a module that addresses gaps in the VUM PowerCLI CMDlets.
-        The VCItegrity private API is used.
-        This function will remove a Baseline Group from the specified VUM instance.
+        Makes a call to the VC Integrity API to remove a baseline group.
+
+    .PARAMETER name
+        Name of the baseline group to remove.
+
+    .PARAMETER removeIfAssigned
+        Force removal of baseline group even if it is currently assigned to an entity.
+
+    .INPUTS
+        None.
+
+    .OUTPUTS
+        None.
+
     .EXAMPLE
         Remove-BaselineGroup -name "Test Baseline Group"
 
         Remove Baseline Group Test Baseline Group. Will not remove if baseline group is currently assigned.
+
     .EXAMPLE
         Remove-BaselineGroup -name "Test Baseline Group" -RemoveIfAssigned
 
         Remove Baseline Group even if it is currently assigned to hosts.
+
+    .LINK
+        https://github.com/TheDotSource/VUMXtra
+
     .NOTES
-        01       08/11/18     Initial version.           A McNair
+        01       08/11/18     Initial version.                                      A McNair
+        02       23/12/19     Tidied up synopsis and added verbose output.          A McNair
     #>
 
-    [CmdletBinding()]
+    [CmdletBinding(SupportsShouldProcess=$true,ConfirmImpact="Medium")]
     Param
     (
         [Parameter(Mandatory=$true,ValueFromPipeline=$false)]
-        [String]$Name,
-        [Switch]$RemoveIfAssigned
+        [String]$name,
+        [Parameter(Mandatory=$false,ValueFromPipeline=$false)]
+        [Switch]$removeIfAssigned
     )
 
-    Write-Debug ("[Remove-BaselineGroup]Function start.")
+    Write-Verbose ("[Remove-BaselineGroup]Function start.")
 
     ## Get a VUM service connection object
     try {
         $vumCon = Connect-VUM -ErrorAction stop
-        Write-Debug ("[Remove-BaselineGroup]Got VUM connection.")
+        Write-Verbose ("[Remove-BaselineGroup]Got VUM connection.")
     } # try
     catch {
         Write-Debug ("[Remove-BaselineGroup]Failed to connect to VUM instance.")
-        throw ("Failed to connect to VUM instance. The CMDlet returned " + $_)  
+        throw ("Failed to connect to VUM instance. The CMDlet returned " + $_)
     } # catch
 
-    ## Verify that this baseline exists
-    $BaseLineGroupInfo = New-Object IntegrityApi.BaselineGroupManagerBaselineGroupInfo
 
+    ## Verify that this baseline group exists
     for ($i=0; $i -le 100; $i++) {
-        
-        ## When baseline is found break out of loop to continue function
-        if (($vumCon.vumWebService.GetBaselineGroupInfo($vumCon.vumServiceContent.baselineGroupManager,$i)).name -eq $Name) {
 
-            $BaselineGroup = $vumCon.vumWebService.GetBaselineGroupInfo($vumCon.vumServiceContent.baselineGroupManager,$i)
-            Write-Debug ("[Remove-BaselineGroup]Found baseline group.")
-            Break    
+        ## When baseline is found break out of loop to continue function
+        if (($vumCon.vumWebService.GetBaselineGroupInfo($vumCon.vumServiceContent.baselineGroupManager,$i)).name -eq $name) {
+
+            $baselineGroup = $vumCon.vumWebService.GetBaselineGroupInfo($vumCon.vumServiceContent.baselineGroupManager,$i)
+            Write-Verbose ("[Remove-BaselineGroup]Found baseline group.")
+            Break
 
         } # if
 
@@ -56,64 +74,81 @@ function Remove-BaselineGroup {
 
 
     ## Check we have a baseline group to work with
-    if (!$BaselineGroup) {
+    if (!$baselineGroup) {
         Write-Debug ("[Remove-BaselineGroup]Baseline group not found.")
-        throw ("The specified baseline group was not found on this VUM instance.")  
+        throw ("The specified baseline group was not found on this VUM instance.")
     } # if
 
 
-    ## If specified, check to see if this baseline group is currently assigned to hosts or clusters
-    if ($RemoveIfAssigned) {
+    Write-Verbose ("[Remove-BaselineGroup]Checking baseline group assignment.")
 
-        Write-Debug ("[Remove-BaselineGroup]Checking baseline group assignment.")
-
-        ## Query what hosts this baseline group is assigned to
-        try {
-            $AssignedHosts = $vumCon.vumWebService.QueryAssignedEntityForBaselineGroup($vumCon.vumServiceContent.baselineGroupManager,$BaselineGroup.key)
-        } # try
-        catch {
-            Write-Debug ("[Remove-BaselineGroup]Failed to query assigned hosts for baseline group.")
-            throw ("Failed to query hosts assigned to this baseline group. " + $_)  
-        } # catch
+    ## Query what hosts this baseline group is assigned to
+    try {
+        $assignedHosts = $vumCon.vumWebService.QueryAssignedEntityForBaselineGroup($vumCon.vumServiceContent.baselineGroupManager,$baselineGroup.key)
+    } # try
+    catch {
+        Write-Debug ("[Remove-BaselineGroup]Failed to query assigned hosts for baseline group.")
+        throw ("Failed to query hosts assigned to this baseline group. " + $_)
+    } # catch
 
 
-        ## Return list of hosts with this baseline group assigned
-        if ($AssignedHosts) {
+    ## Baseline group is assigned, display warnings
+    if ($assignedHosts -and $removeIfAssigned) {
 
-            $ReturnHosts = @()
+        Write-Warning ("-removeIfAssigned has been specified. The following entities will have this baseline group removed.")
 
-            foreach ($AssignedHost in $AssignedHosts.entity) {
+        foreach ($assignedHost in $assignedHosts.entity) {
 
-                $ReturnHosts += (Get-VMHost | where {$_.ExtensionData.MoRef.value -eq $AssignedHost.value}).Name
-                Write-Debug ("[Remove-BaselineGroup]Added host.")
-            } # foreach
+            ## Write warning for assigned entity
+            Write-Warning ("Entity "  + $assignedHost.value)
+
+        } # foreach
+
+    } # if
+    ## Baseline group is assigned and won't be removed. Function will return.
+    elseif ($assignedHosts -and !$removeIfAssigned) {
+
+        Write-Warning ("-removeIfAssigned has not been specified. The following entities have this baseline group assigned.")
+
+        foreach ($assignedHost in $assignedHosts.entity) {
+
+            ## Write warning for assigned entity
+            Write-Warning ("Entity "  + $assignedHost.value)
+
+        } # foreach
+
+        Write-Warning ("Use the -removeIfAssigned parameter or remove this group for these entities.")
+        Return
+
+    } # elseif
 
 
-            ## Write-host used to stop output going to pipeline
-            Write-Host "The following entities have this Baseline Group assigned. Use the RemoveIfAssigned switch to force removal."
+    ## Remove this baseline group. Either warning has been displayed or function has returned.
+    try {
+        ## Apply shouldProcess
+        if ($PSCmdlet.ShouldProcess($name)) {
 
-
-            ## Return objects to pipeline
-            Write-Debug ("[Remove-BaselineGroup]Return list of hosts.")
-            return $ReturnHosts
-
+            $vumCon.vumWebService.DeleteBaselineGroup($vumCon.vumServiceContent.baselineGroupManager, $baselineGroup.key)
         } # if
 
-    } # if
-
-
-    ## Remove this baseline group
-    try {
-        $vumCon.vumWebService.DeleteBaselineGroup($vumCon.vumServiceContent.baselineGroupManager, $BaselineGroup.key)
-        Write-Debug ("[Remove-BaselineGroup]Baseline group removed.")
+        Write-Verbose ("[Remove-BaselineGroup]Baseline group removed.")
     } # try
     catch {
         Write-Debug ("[Remove-BaselineGroup]Could not remove baseline group.")
-        throw ("Failed to remove the specified baseline group. " + $_)  
+        throw ("Failed to remove the specified baseline group. " + $_)
     } # catch
 
 
     ## Logoff session
-    $vumCon.vumWebService.VciLogout($vumCon.vumServiceContent.sessionManager)
+    try {
+        $vumCon.vumWebService.VciLogout($vumCon.vumServiceContent.sessionManager)
+        Write-Verbose ("[Remove-BaselineGroup]Disconnected from VUM API.")
+    } # try
+    catch {
+        Write-Warning ("[Remove-BaselineGroup]Failed to disconnect from VUM API.")
+    } # catch
+
+
+    Write-Verbose ("[Attach-BaselineGroup]Function completed.")
 
 } # function

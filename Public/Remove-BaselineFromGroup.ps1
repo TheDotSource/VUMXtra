@@ -1,52 +1,67 @@
 function Remove-BaselineFromGroup {
     <#
     .SYNOPSIS
-        Removes a baseline from a baseline group.
-    .DESCRIPTION
-        This function is part of a module that addresses gaps in the VUM PowerCLI CMDlets.
-        The VCItegrity private API is used.
-        This function will remove a Baseline to a BaselineGroup
-    .EXAMPLE
-        Remove-BaselineFromGroup -BaselineGroupName "Host Patches" -Baseline "August Baseline"
+        Removes a baseline from a VUM baseline group.
 
-        Removes a baseline called August Baseline to a baseline group Host Patches.
+    .DESCRIPTION
+        Makes a call to the VC Integrity API to remove a baseline from a VUM baseline group.
+
+    .PARAMETER baselineGroupName
+        The target baseline group to remove the baseline from.
+
+    .PARAMETER baselineName
+        The baseline to remove from the baseline group.
+
+    .INPUTS
+        None.
+
+    .OUTPUTS
+        None.
+
+    .EXAMPLE
+        Remove-BaselineFromGroup -baselineGroupName "Host Patches" -baseline "August Baseline"
+
+        Removes a baseline called August Baseline from baseline group Host Patches.
+
+    .LINK
+        https://github.com/TheDotSource/VUMXtra
+
     .NOTES
-        01       08/11/18     Initial version.           A McNair
+        01       08/11/18     Initial version.                                      A McNair
+        02       23/12/19     Tidied up synopsis and added verbose output.          A McNair
     #>
 
-    [CmdletBinding()]
+    [CmdletBinding(SupportsShouldProcess=$true,ConfirmImpact="Medium")]
     Param
     (
         [Parameter(Mandatory=$true,ValueFromPipeline=$false)]
-        [String]$BaselineGroupName,
+        [String]$baselineGroupName,
         [Parameter(Mandatory=$true,ValueFromPipeline=$false)]
-        [String]$BaselineName
+        [String]$baselineName
     )
 
-    Write-Debug ("[Remove-BaselineFromGroup]Function start.")
+    Write-Verbose ("[Remove-BaselineFromGroup]Function start.")
 
     ## Get a VUM service connection object
     try {
-        $vumCon = Connect-VUM -ErrorAction stop
-        Write-Debug ("[Remove-BaselineGroup]Got VUM connection.")
+        $vumCon = Connect-VUM -ErrorAction Stop
+        Write-Verbose ("[Remove-BaselineFromGroup]Got VUM connection.")
     } # try
     catch {
-        Write-Debug ("[Remove-BaselineGroup]Failed to connect to VUM instance.")
-        throw ("Failed to connect to VUM instance. The CMDlet returned " + $_)  
+        Write-Debug ("[Remove-BaselineFromGroup]Failed to connect to VUM instance.")
+        throw ("Failed to connect to VUM instance. The CMDlet returned " + $_)
     } # catch
- 
+
 
     ## Verify that the baseline group exists
-    $BaseLineGroupInfo = New-Object IntegrityApi.BaselineGroupManagerBaselineGroupInfo
-
     for ($i=0; $i -le 100; $i++) {
-        
-        ## When baseline is found break out of loop to continue function
-        if (($vumCon.vumWebService.GetBaselineGroupInfo($vumCon.vumServiceContent.baselineGroupManager,$i)).name -eq $BaselineGroupName) {
 
-            $BaselineGroup = $vumCon.vumWebService.GetBaselineGroupInfo($vumCon.vumServiceContent.baselineGroupManager,$i)
-            Write-Debug ("[Remove-BaselineFromGroup]Found baseline group.")
-            Break    
+        ## When baseline is found break out of loop to continue function
+        if (($vumCon.vumWebService.GetBaselineGroupInfo($vumCon.vumServiceContent.baselineGroupManager,$i)).name -eq $baselineGroupName) {
+
+            $baselineGroup = $vumCon.vumWebService.GetBaselineGroupInfo($vumCon.vumServiceContent.baselineGroupManager,$i)
+            Write-Verbose ("[Remove-BaselineFromGroup]Found baseline group.")
+            Break
 
         } # if
 
@@ -54,54 +69,55 @@ function Remove-BaselineFromGroup {
 
 
     ## Check we have a baseline group to work with
-    if (!$BaselineGroup) {
+    if (!$baselineGroup) {
         Write-Debug ("[Remove-BaselineFromGroup]Baseline group not found.")
-        throw ("The specified baseline group was not found on this VUM instance.")  
+        throw ("The specified baseline group was not found on this VUM instance.")
     } # if
 
 
     ## Check specified baseline exists
     try {
-        $Baseline = Get-Baseline -Name $BaselineName -ErrorAction Stop
+        $baseline = Get-Baseline -Name $baselineName -ErrorAction Stop
     } # try
     catch {
         Write-Debug ("[Remove-BaselineFromGroup]Failed to get baseline.")
-        throw ("Failed to get baseline. " + $_)  
+        throw ("Failed to get baseline. " + $_)
     } # catch
 
 
     ## Get baselines already attached to this group
     ## VUM for whatever reason has a problem with Powershell arrays, so we need a .net one
-    $ArrayList = New-Object System.Collections.ArrayList
+    $arrayList = New-Object System.Collections.ArrayList
 
 
     ## Add each item into out .net array
-    foreach ($BaselineItem in $BaselineGroup.baseline) {
+    foreach ($baselineItem in $baselineGroup.baseline) {
 
-        [void]$ArrayList.Add($BaselineItem)
+        [void]$arrayList.Add($baselineItem)
 
     } # foreach
 
-    Write-Debug ("[Remove-BaselineFromGroup]Acquired list of existing baselines.")
+    Write-Verbose ("[Remove-BaselineFromGroup]Acquired list of existing baselines.")
 
 
     ## Verify that the baseline we are adding has this baseline assigned
-    if ($ArrayList -notcontains $Baseline.Id) {
+    if ($arrayList -notcontains $baseline.Id) {
 
-        Write-Debug ("[Remove-BaselineFromGroup]Baseline does not exist in group.")
-        throw ("This baseline does not exist in the baseline group.")
+        Write-Warning ("Baseline does not exist in target baseline group. No action has been taken.")
+        return
 
     } # if
     else {
 
         ## Add specified baseline ID to array
         [void]$ArrayList.Remove($Baseline.Id)
-        Write-Debug ("[Remove-BaselineFromGroup]Added baseline.")
+        Write-Verbose ("[Remove-BaselineFromGroup]Revmoed baseline from baseline group.")
+
     } # else
 
 
     ## Create new baseline group spec
-    $BaselineGroupUpdate = New-Object IntegrityApi.BaselineGroupManagerBaselineGroupInfo
+    $baselineGroupUpdate = New-Object IntegrityApi.BaselineGroupManagerBaselineGroupInfo
     Write-Debug ("[Remove-BaselineFromGroup]Created baseline group update object.")
 
     ## Set baseline group spec properties
@@ -118,8 +134,14 @@ function Remove-BaselineFromGroup {
 
     ## Apply update to baseline group
     try {
-        $vumCon.vumWebService.SetBaselineGroupInfo($vumCon.vumServiceContent.baselineGroupManager,$BaselineGroupUpdate)
-        Write-Debug ("[Remove-BaselineFromGroup]Applied update to baseline group.")
+
+        ## Apply shouldProcess
+        if ($PSCmdlet.ShouldProcess($baselineName + " in baseline group " + $baselineGroupName)) {
+
+            $vumCon.vumWebService.SetBaselineGroupInfo($vumCon.vumServiceContent.baselineGroupManager,$BaselineGroupUpdate)
+        } # if
+
+        Write-Verbose ("[Remove-BaselineFromGroup]Applied update to baseline group.")
     } # try
     catch {
         Write-Debug ("[Remove-BaselineFromGroup]Failed to apply update to group.")
@@ -128,6 +150,15 @@ function Remove-BaselineFromGroup {
 
 
     ## Logoff session
-    $vumCon.vumWebService.VciLogout($vumCon.vumServiceContent.sessionManager)
+    try {
+        $vumCon.vumWebService.VciLogout($vumCon.vumServiceContent.sessionManager)
+        Write-Verbose ("[Remove-BaselineFromGroup]Disconnected from VUM API.")
+    } # try
+    catch {
+        Write-Warning ("[Remove-BaselineFromGroup]Failed to disconnect from VUM API.")
+    } # catch
+
+
+    Write-Verbose ("[Remove-BaselineFromGroup]Function completed.")
 
 } # function

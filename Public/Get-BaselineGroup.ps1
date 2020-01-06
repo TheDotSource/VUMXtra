@@ -1,68 +1,80 @@
 function Get-BaselineGroup {
     <#
     .SYNOPSIS
-        Gets a list of baseline groups.
+        Gets a list of baseline groups from VUM.
+
     .DESCRIPTION
-        This function is part of a module that addresses gaps in the VUM PowerCLI CMDlets.
-        The VCIntegrity private API is used.
-        This function will get Baseline Groups from a VUM server.
-        At present this is done in a less than optimal way. 
-        We iterate through all baseline group ID's from 0 to 100 and check for the presence of a baseline group.
-        As the VCIntegrity API is undocumented this is the only known method.
+        Makes a call to the VC Integrity API to get a list of baseline groups.
+
+    .PARAMETER name
+        The name of the baseline group to get. Optional, if blank then all baseline groups will be retrieved.
+
+    .INPUTS
+        None.
+
+    .OUTPUTS
+        IntegrityApi.BaselineGroupManagerBaselineGroupInfo One or more baseline group objects.
+
     .EXAMPLE
         Get-BaselineGroup -name "Test Baseline Group"
 
         Get a specific baseline group
+
     .EXAMPLE
         Get-BaselineGroup
 
         Get all baseline groups on this server
+
+    .LINK
+        https://github.com/TheDotSource/VUMXtra
+
     .NOTES
-        01       17/10/18     Initial version.           A McNair
+        01       17/10/18     Initial version.                                       A McNair
+        02       23/12/19     Tidied up synopsis and added verbose output.           A McNair
     #>
 
     [CmdletBinding()]
     Param
     (
         [Parameter(Mandatory=$false,ValueFromPipeline=$false)]
-        [String]$Name
+        [String]$name
     )
 
-    Write-Debug ("[Get-BaselineGroup]Function start.")
+    Write-Verbose ("[Get-BaselineGroup]Function start.")
 
     ## Get a VUM service connection object
     try {
         $vumCon = Connect-VUM -ErrorAction stop
-        Write-Debug ("[Remove-BaselineGroup]Got VUM connection.")
+        Write-Verbose ("[Get-BaselineGroup]Got VUM connection.")
     } # try
     catch {
-        Write-Debug ("[Remove-BaselineGroup]Failed to connect to VUM instance.")
-        throw ("Failed to connect to VUM instance. The CMDlet returned " + $_)  
+        Write-Debug ("[Get-BaselineGroup]Failed to connect to VUM instance.")
+        throw ("Failed to connect to VUM instance. The CMDlet returned " + $_)
     } # catch
 
 
     ## Gather existing baseline groups
-    $BaselineGroups = @()
-    $BaseLineGroupInfo = New-Object IntegrityApi.BaselineGroupManagerBaselineGroupInfo
+    $baselineGroups = @()
 
-    Write-Debug ("[Get-BaselineGroup]Starting scan for baseline groups.")
+    Write-Verbose ("[Get-BaselineGroup]Starting scan for baseline groups.")
+
 
     for ($i=0; $i -le 100; $i++) {
-        
+
         if ($vumCon.vumWebService.GetBaselineGroupInfo($vumCon.vumServiceContent.baselineGroupManager,$i)) {
 
-            $BaselineGroup = $vumCon.vumWebService.GetBaselineGroupInfo($vumCon.vumServiceContent.baselineGroupManager,$i)
+            $baselineGroup = $vumCon.vumWebService.GetBaselineGroupInfo($vumCon.vumServiceContent.baselineGroupManager,$i)
 
-            Write-Debug ("[Get-BaselineGroup]Got baseline group.")
+            Write-Verbose ("[Get-BaselineGroup]Got baseline group.")
 
             ## If name parameter is specified, check against this
             if ($name) {
 
                 ## If baseline group name matches Name parameter add it and break the loop
-                if ($Name -eq $BaselineGroup.name) {
+                if ($Name -eq $baselineGroup.name) {
 
-                    $BaselineGroups += $BaselineGroup
-                    Write-Debug ("[Get-BaselineGroup]Added baseline group with name match.")
+                    $baselineGroups += $baselineGroup
+                    Write-Verbose ("[Get-BaselineGroup]Added baseline group with name match.")
 
                     ## We found the baseline group, we can break out of the loop
                     Break
@@ -71,8 +83,8 @@ function Get-BaselineGroup {
             } # if
             else {
                 ## If name parameter not specified, add everything to the results
-                $BaselineGroups += $BaselineGroup
-                Write-Debug ("[Get-BaselineGroup]Added baseline group.")
+                $baselineGroups += $baselineGroup
+                Write-Verbose ("[Get-BaselineGroup]Added baseline group.")
             } # else
 
         } # if
@@ -81,9 +93,18 @@ function Get-BaselineGroup {
 
 
     ## Logoff session
-    $vumCon.vumWebService.VciLogout($vumCon.vumServiceContent.sessionManager)
+    try {
+        $vumCon.vumWebService.VciLogout($vumCon.vumServiceContent.sessionManager)
+        Write-Verbose ("[Get-BaselineGroup]Disconnected from VUM API.")
+    } # try
+    catch {
+        Write-Warning ("[Get-BaselineGroup]Failed to disconnect from VUM API.")
+    } # catch
 
-    Write-Debug ("[Get-BaselineGroup]Function complete.")
-    return $BaselineGroups
+
+    Write-Verbose ("[Get-BaselineGroup]Function completed.")
+
+    ## Return results
+    return $baselineGroups
 
 } # function

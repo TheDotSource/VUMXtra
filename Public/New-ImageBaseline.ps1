@@ -1,42 +1,62 @@
 function New-ImageBaseline {
     <#
     .SYNOPSIS
-        Creates a new image baseline.
-    .DESCRIPTION
-        This function is part of a module that addresses gaps in the VUM PowerCLI CMDlets.
-        The VCItegrity private API is used.
-        This function will create a new image baseline on the specified VUM instance.
-        The image must have been previously imported to VUM.
-    .EXAMPLE
-        New-ImageBaseline -Name "Test Image Baseline" -Description "Sample" -Image "ESXi 6.5 Standard"
+        Creates a new image baseline in VUM.
 
-        Creates a new image baseline called Test Image Baseline with description Sample using image ESXi 6.5 Standard
+    .DESCRIPTION
+        Makes a call to the VC Integrity API to create a new VUM image baseline.
+
+    .PARAMETER name
+        The name of the new image baseline.
+
+    .PARAMETER description
+        The description of the new image baseline. Optional.
+
+    .PARAMETER image
+        The name of the image used to created the image baseline, as per the image name in the VUM console.
+
+    .INPUTS
+        None.
+
+    .OUTPUTS
+        System.Management.Automation.PSCustomObject. Object representing the new image baseline.
+
+
+    .EXAMPLE
+        New-ImageBaseline -Name "6.7 Upgrade" -Description "Sample" -Image "ESXi-6.7.0-20190802001-standard"
+
+        Creates a new image baseline called "6.7 Upgrade" with description Sample using the VUM image ESXi-6.7.0-20190802001-standard
+
+    .LINK
+        https://github.com/TheDotSource/VUMXtra
+
     .NOTES
-        01       13/11/18     Initial version.           A McNair
+        01       13/11/18     Initial version.                                       A McNair
+        02       23/12/19     Tidied up synopsis and added verbose output.           A McNair
     #>
 
-    [CmdletBinding()]
+    [CmdletBinding(SupportsShouldProcess=$true,ConfirmImpact="Low")]
     Param
     (
         [Parameter(Mandatory=$true,ValueFromPipeline=$false)]
-        [String]$Name,
+        [String]$name,
         [Parameter(Mandatory=$false,ValueFromPipeline=$false)]
-        [String]$Description,
+        [String]$description,
         [Parameter(Mandatory=$true,ValueFromPipeline=$false)]
-        [String]$Image
+        [String]$image
     )
 
 
-    Write-Debug ("[New-ImageBaseline]Function start.")
+    Write-Verbose ("[New-ImageBaseline]Function start.")
 
     ## Get a VUM service connection object
     try {
         $vumCon = Connect-VUM -ErrorAction stop
-        Write-Debug ("[Remove-BaselineGroup]Got VUM connection.")
+        Write-Verbose ("[New-ImageBaseline]Got VUM connection.")
     } # try
     catch {
-        Write-Debug ("[Remove-BaselineGroup]Failed to connect to VUM instance.")
-        throw ("Failed to connect to VUM instance. The CMDlet returned " + $_)  
+        Write-Debug ("[New-ImageBaseline]Failed to connect to VUM instance.")
+        throw ("Failed to connect to VUM instance. The CMDlet returned " + $_)
     } # catch
 
 
@@ -50,7 +70,7 @@ function New-ImageBaseline {
     ## Get available images
     try {
         $Images = $vumCon.vumWebService.QueryAvailableProducts($vumCon.vumServiceContent.upgradeProductManager, "Host")
-        Write-Debug ("[New-ImageBaseline]Acquired available images.")
+        Write-Verbose ("[New-ImageBaseline]Acquired available images.")
     } # try
     catch {
         Write-Debug ("[New-ImageBaseline]Failed to query available images.")
@@ -59,17 +79,17 @@ function New-ImageBaseline {
 
 
     ## Find key for specified image
-    $Key = ($Images | where {$_.profileName -eq $Image}).upgradeReleaseKey
+    $Key = ($Images | Where-Object {$_.profileName -eq $Image}).upgradeReleaseKey
 
     ## Check we have an available image
-    if (!$Key) {
+    if (!$key) {
         Write-Debug ("[New-ImageBaseline]Failed to find specified image.")
         throw ("The specified image does not exist on this VUM instance.")
     } # if
 
 
     ## Create a image baseline specification
-    $baselineSpec = New-Object IntegrityApi.HostUpgradeBaselineSpec	
+    $baselineSpec = New-Object IntegrityApi.HostUpgradeBaselineSpec
     $baselineSpec.attribute = New-Object IntegrityApi.BaselineAttribute
     $baselineSpec.name = $Name
     $baselineSpec.description = $Description
@@ -84,8 +104,14 @@ function New-ImageBaseline {
 
     ## Create new image baseline
     try {
-        $baselineID = $vumCon.vumWebService.CreateBaseline($vumCon.vumServiceContent.baselineManager, $baselineSpec)
-        Write-Debug ("[New-ImageBaseline]Image baseline created.")
+
+        ## Apply shouldProcess
+        if ($PSCmdlet.ShouldProcess($name)) {
+
+            $baselineID = $vumCon.vumWebService.CreateBaseline($vumCon.vumServiceContent.baselineManager, $baselineSpec)
+        } # if
+
+        Write-Verbose ("[New-ImageBaseline]Image baseline created.")
     } # try
     catch {
         Write-Debug ("[New-ImageBaseline]Failed to create image baseline.")
@@ -94,13 +120,24 @@ function New-ImageBaseline {
 
 
     ## Generate return object
-    $IBObject = @{"Name" = $Name; "Description" = $Description; "Id" = $baselineID}
+    $ibObject = [pscustomobject]@{"Name" = $Name; "Description" = $Description; "Id" = $baselineID}
 
 
     ## Logoff session
-    $vumCon.vumWebService.VciLogout($vumCon.vumServiceContent.sessionManager)
+    try {
+        $vumCon.vumWebService.VciLogout($vumCon.vumServiceContent.sessionManager)
+        Write-Verbose ("[New-ImageBaseline]Disconnected from VUM API.")
+    } # try
+    catch {
+        Write-Warning ("[New-ImageBaseline]Failed to disconnect from VUM API.")
+    } # catch
 
 
+    Write-Verbose ("[New-ImageBaseline]Function completed.")
+
+
+    ## Return object
     return $IBObject
+
 
 } # function
