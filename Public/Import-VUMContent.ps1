@@ -37,17 +37,17 @@ function Import-VUMContent {
         More than one VI connection can be used in scanarios where the VCSA does not manage it's own VM object.
 
     .EXAMPLE
-        Import-ESXImage -ImageFile E:\VUM\Patches\ESXi650-201810001.zip -VUMType VCSA -ImportType Patch -VCSAVM VCSA60-02 -VCSACred (Get-Credential)
+        Import-VUMContent -ImageFile E:\VUM\Patches\ESXi650-201810001.zip -VUMType VCSA -ImportType Patch -VCSAVM VCSA60-02 -VCSACred (Get-Credential)
 
         Import a patch to a VCSA integrated VUM instance.
 
     .EXAMPLE
-        Import-ESXImage -ImageFile E:\VUM\Patches\ESXi650-201810001.zip -VUMType Windows -ImportType Patch -WindowsHost WINVUM01 -WinCred (Get-Credential)
+        Import-VUMContent -ImageFile E:\VUM\Patches\ESXi650-201810001.zip -VUMType Windows -ImportType Patch -WindowsHost WINVUM01 -WinCred (Get-Credential)
 
         Import a patch to a Windows VUM instance.
 
     .EXAMPLE
-        Import-ESXImage -ImageFile E:\VUM\Images\VMware-VMvisor-Installer-6.0.0.update03-5050593.x86_64.iso -VUMType VCSA -ImportType Image -VCSAVM VCSA60-02 -VCSACred (Get-Credential)
+        Import-VUMContent -ImageFile E:\VUM\Images\VMware-VMvisor-Installer-6.0.0.update03-5050593.x86_64.iso -VUMType VCSA -ImportType Image -VCSAVM VCSA60-02 -VCSACred (Get-Credential)
 
         Import an image to a VCSA integrated VUM instance.
 
