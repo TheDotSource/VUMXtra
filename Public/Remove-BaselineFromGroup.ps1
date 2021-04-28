@@ -54,7 +54,7 @@ function Remove-BaselineFromGroup {
 
 
     ## Verify that the baseline group exists
-    for ($i=0; $i -le 100; $i++) {
+    for ($i=0; $i -le 255; $i++) {
 
         ## When baseline is found break out of loop to continue function
         if (($vumCon.vumWebService.GetBaselineGroupInfo($vumCon.vumServiceContent.baselineGroupManager,$i)).name -eq $baselineGroupName) {
