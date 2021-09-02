@@ -6,16 +6,14 @@ function Import-VUMContent {
     .DESCRIPTION
         This function uses a combination of file copy and VC Integrity API to perform content import on a VUM instance.
         The file is first copied to either a Windows instance or VCSA to a known location on the local file system.
-        On Windows, this is done via UNC. On the VCSA, VM tools is required to copy the file.
+        On Windows, this is done via UNC. On the VCSA, a VM tools file copy or a CURL command will be used to copy content.
         The VC Integrity API is then used to import the content to VUM.
-
-        An alternative and better solution would be to use the VUM file upload manager if the associated API calls can be determined.
 
     .PARAMETER VUMType
         Either Windows or VCSA. This will unlock a conditional parameter set to collect appropriate details for each.
 
     .PARAMETER FilePath
-        The path to the file to be imported to VUM.
+        The path to the file to be imported to VUM. This may be a local path or an HTTP URL (VCSA only).
 
     .PARAMETER ImportType
         Use Image to import an ISO, and Patch to import patch content.
@@ -58,6 +56,13 @@ function Import-VUMContent {
         This command is run in the context of having 2 VI connections, one to the VCSA that manages DEVVCSA, and another VI connection devvcsa.lab.local
         This allows VM tools to import to DEVVCSA, and the API call to be made to devvcsa.lab.local
 
+    .EXAMPLE
+        Import-VUMContent -VUMType VCSA -FilePath http://vumcontent.local/VMware-VMvisor-Installer-6.7.0.update03-14320388.x86_64.iso -ImportType Image -VCSAVM DEVVCSA -VCSACred $rootCred -vumVI devvcsa.lab.local -Verbose
+
+        This is an example of a content import to a VUM instance where the vCenter does not manage it's own VM object.
+        This command is run in the context of having 2 VI connections, one to the VCSA that manages DEVVCSA, and another VI connection devvcsa.lab.local
+        A remote script will be executed to CURL down the ISO file to the appliance where an it can then be imported.
+
     .LINK
         https://github.com/TheDotSource/VUMXtra
 
@@ -66,6 +71,7 @@ function Import-VUMContent {
         02       29/11/18     Changed file copy for Windows VUM from UNC to PS Drive so a credential can be specifed.         A McNair
         03       23/12/19     Tidied up synopsis and added verbose output.                                                    A McNair
                               Added additonal parameter vumVI to allow for content import to non-self managed VCSA's
+        04       02/09/21     Added support for content from an HTTP location.                                                A McNair
     #>
 
     [CmdletBinding()]
@@ -269,16 +275,50 @@ function Import-VUMContent {
                 } # catch
 
 
-                ## Copy file to VCSA path using VM tools
-                try {
-                    Copy-VMGuestFile -Source $FilePath -Destination "/storage/updatemgr/patch-store-temp/$($FileName)" -LocalToGuest -VM $VCSAVMObject -GuestCredential $VCSACred.value -force -ErrorAction Stop
-                    Write-Verbose ("[Import-VUMContent]File copied to VCSA.")
-                } # try
-                catch {
-                    Write-Debug ("[Import-VUMContent]Failed to copy file to VCSA.")
-                    throw ("Failed to copy file to VCSA. " + $_)
-                } # catch
+                ## If path starts with HTTP or HTTPS, we'll use a remote CURL command to pull down content.
+                ## If not, we'll use VM tools to invoke a file copy.
 
+                switch -Wildcard ($FilePath) {
+
+                    ## Is an HTTP URL, use CURL
+                    "http*" {
+
+                        ## Issue a CURL command via VM tools to download the ISO to the patch import folder
+                        Write-Verbose ("[Import-VUMContent]HTTP path detected. Downloading ISO to target appliance from " + $FilePath)
+
+                        $remoteCmd = ("curl " + $FilePath + " --output /storage/updatemgr/patch-store-temp/" + $FileName + " --fail")
+
+                        try {
+                            $scriptOutput = Invoke-VMScript -ScriptText $remoteCmd -VM $VCSAVMObject -GuestCredential $VCSACred.value
+                            Write-Verbose ("[Import-VUMContent]Remote script execution completed.")
+                        } # try
+                        catch {
+                            throw ("Attempt to execute remote script failed. " + $_.exception.message)
+                        } # catch
+
+                        ## Check script exit code is 0, i.e. no errors thrown.
+                        if ($scriptOutput.ExitCode -ne 0) {
+                            throw ("Attempt to download ISO to appliance failed. CURL exit code was " + $scriptOutput.ExitCode + ". The script output was " + $scriptOutput.ScriptOutput)
+                        } # if
+
+                    } # http
+
+                    ## Is a conventional path, use VM tools file copy
+                    default {
+
+                        ## Copy file to VCSA path using VM tools
+                        try {
+                            Copy-VMGuestFile -Source $FilePath -Destination "/storage/updatemgr/patch-store-temp/$($FileName)" -LocalToGuest -VM $VCSAVMObject -GuestCredential $VCSACred.value -force -ErrorAction Stop
+                            Write-Verbose ("[Import-VUMContent]File copied to VCSA.")
+                        } # try
+                        catch {
+                            Write-Debug ("[Import-VUMContent]Failed to copy file to VCSA.")
+                            throw ("Failed to copy file to VCSA. " + $_.exception.message)
+                        } # catch
+
+                    } # default
+
+                } # switch
 
                 ## Set file import spec path for VCSA
                 $importSpec.FilePath = ("/storage/updatemgr/patch-store-temp/$($FileName)")
