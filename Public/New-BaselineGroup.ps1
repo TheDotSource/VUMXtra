@@ -62,7 +62,7 @@ function New-BaselineGroup {
         Write-Verbose ("[New-BaselineGroup]Creating baseline group " + $name)
 
         ## Check if this baseline group already exists
-        for ($i=0; $i -le 255; $i++) {
+        for ($i=0; $i -le 768; $i++) {
 
             if ($vumCon.vumWebService.GetBaselineGroupInfo($vumCon.vumServiceContent.baselineGroupManager,$i)) {
 

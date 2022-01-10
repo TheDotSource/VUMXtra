@@ -59,7 +59,7 @@ function Get-BaselineGroup {
     Write-Verbose ("[Get-BaselineGroup]Starting scan for baseline groups.")
 
 
-    for ($i=0; $i -le 255; $i++) {
+    for ($i=0; $i -le 768; $i++) {
 
         if ($vumCon.vumWebService.GetBaselineGroupInfo($vumCon.vumServiceContent.baselineGroupManager,$i)) {
 
