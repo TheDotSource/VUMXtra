@@ -51,11 +51,11 @@ function Connect-VUM {
         ## Parameter was specified, set the VI connection to use
         {($_)} {
             Write-Verbose ("vumVI parameter was specified. Using vCenter " + $vumVI + " for VUM API connection.")
-            $vCenterServer = $global:DefaultVIServers | where {$_.name -eq $vumVI}
+            $vCenterServer = $global:DefaultVIServers | Where-Object {$_.name -eq $vumVI}
         } # true
 
         ## Parameter not specified, but there multiple VI connections, exit as this is ambiguous.
-        {(!$_) -and ($global:DefaultVIServers.count -gt 1)} {        
+        {(!$_) -and ($global:DefaultVIServers.count -gt 1)} {
             throw ("Multiple vCenter connections detected, either use a single default connection, or specify the -vumVI parameter.")
         }  # false
 
@@ -73,6 +73,32 @@ function Connect-VUM {
         throw ("Not connected to vCenter or specified vCenter instance was not found in list of active connections.")
     } # if
 
+    ## Check the PowerCLI invalid vertificate action. If set to ignore, then configure HTTP connections to ignore invlaid certs
+    $pcliConfig = Get-PowerCLIConfiguration
+
+    if (($pcliConfig | Where-Object {$_.scope -eq "session"}).invalidCertificateAction -eq "ignore") {
+        Write-Verbose ("[Connect-VUM]PowerCLI is configured to ignore invlaid certificates.")
+
+        ## Ignore invalid certificates
+        if (!([System.Management.Automation.PSTypeName]'TrustAllCertsPolicy').Type) {
+            Add-Type @"
+            using System.Net;
+            using System.Security.Cryptography.X509Certificates;
+            public class TrustAllCertsPolicy : ICertificatePolicy {
+                public bool CheckValidationResult(
+                    ServicePoint srvPoint, X509Certificate certificate,
+                    WebRequest request, int certificateProblem) {
+                    return true;
+                }
+            }
+"@
+
+            [System.Net.ServicePointManager]::CertificatePolicy = New-Object TrustAllCertsPolicy -ErrorAction SilentlyContinue
+
+            [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
+
+        } # if
+    } # if
 
     ## Get VUM extension
     try {
