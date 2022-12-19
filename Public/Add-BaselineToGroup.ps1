@@ -35,6 +35,7 @@ function Add-baselineToGroup {
         01       13/11/18     Initial version.                                       A McNair
         02       23/12/19     Tidied up synopsis and added verbose output.           A McNair
                               Added pipeline for baseline groups.
+        03       30/11/22     Reworked for PowerCLI 12.7 and new API                 A McNair
     #>
 
     [CmdletBinding()]
@@ -48,16 +49,15 @@ function Add-baselineToGroup {
 
     begin {
 
-        Write-Verbose ("[Add-baselineToGroup]Function start.")
+        Write-Verbose ("Function start.")
 
         ## Get a VUM service connection object
         try {
             $vumCon = Connect-VUM -ErrorAction stop
-            Write-Verbose ("[Add-baselineToGroup]Got VUM connection.")
+            Write-Verbose ("Got VUM connection.")
         } # try
         catch {
-            Write-Debug ("[Add-baselineToGroup]Failed to connect to VUM instance.")
-            throw ("Failed to connect to VUM instance. The CMDlet returned " + $_)
+            throw ("Failed to connect to VUM instance. The CMDlet returned " + $_.Exception.Message)
         } # catch
 
 
@@ -66,37 +66,53 @@ function Add-baselineToGroup {
 
     process {
 
-        Write-Verbose ("[Add-baselineToGroup]Processing baseline group " + $baselineGroupName)
+        Write-Verbose ("Processing baseline group " + $baselineGroupName)
+
+        $reqType = New-Object IntegrityApi.GetBaselineGroupInfoRequestType
+        $reqType._this = $vumCon.vumServiceContent.RetrieveVcIntegrityContentResponse.returnval.baselineGroupManager
 
 
         ## Verify that the baseline group exists
         for ($i=0; $i -le 100; $i++) {
-                    ## When baseline is found break out of loop to continue function
-            if (($vumCon.vumWebService.GetBaselineGroupInfo($vumCon.vumServiceContent.baselineGroupManager,$i)).name -eq $BaselineGroupName) {
 
-                $BaselineGroup = $vumCon.vumWebService.GetBaselineGroupInfo($vumCon.vumServiceContent.baselineGroupManager,$i)
-                Write-Verbose ("[Add-baselineToGroup]Found baseline group.")
-                Break
+            $reqType.id = $i
 
-            } # if
+            try {
+                $svcRefVum = New-Object IntegrityApi.GetBaselineGroupInfoRequest($reqType) -ErrorAction Stop
+                $result = $vumCon.vumWebService.GetBaselineGroupInfo($svcRefVum)
+
+                ## When baseline is found break out of loop to continue function
+                if (($result.GetBaselineGroupInfoResponse1).name -eq $baselineGroupName) {
+
+                    $baselineGroup  = $result.GetBaselineGroupInfoResponse1
+                    Break
+
+                } # if
+            } # try
+            catch {
+                throw ("Failed to query for baseline group. " + $_.Exception.message)
+            } # catch
 
         } # for
 
 
         ## Check we have a baseline group to work with
         if (!$baselineGroup) {
-            Write-Debug ("[Add-baselineToGroup]Baseline group not found.")
             throw ("The specified baseline group was not found on this VUM instance.")
         } # if
+        else {
+            Write-Verbose ("Baseline group " + $baselineGroup.name + " was found, ID " + $baselineGroup.key)
+        } # else
 
 
         ## Check specified baseline exists
+        Write-Verbose ("Fetching target baseline.")
+
         try {
-            $baseline = Get-Baseline -Name $BaselineName -ErrorAction Stop
-            Write-Verbose ("[Add-baselineToGroup]Got baseline " + $baseline.name)
+            $baseline = Get-Baseline -Name $baselineName -ErrorAction Stop
+            Write-Verbose ("Got baseline " + $baseline.name)
         } # try
         catch {
-            Write-Debug ("[Add-baselineToGroup]Failed to get baseline.")
             throw ("Failed to get baseline. " + $_)
         } # catch
 
@@ -106,82 +122,113 @@ function Add-baselineToGroup {
         $arrayList = New-Object System.Collections.ArrayList
 
 
-        ## Add each item into out .net array
-        foreach ($BaselineItem in $BaselineGroup.baseline) {
+        ## Add each item into our .net array
+        foreach ($baselineItem in $baselineGroup.baseline) {
 
-            [void]$arrayList.Add($BaselineItem)
+            [void]$arrayList.Add($baselineItem)
 
         } # foreach
 
-        Write-Verbose ("[Add-baselineToGroup]Acquired list of existing baselines.")
+        Write-Verbose ("Acquired list of existing baselines.")
 
 
         ## If this baseline already exists in this group then return from the function, no more work to do
         if ($arrayList -contains $baseline.Id) {
 
-            Write-Verbose ("[Add-baselineToGroup]Baseline already exists in group, no further action is necessary.")
+            Write-Verbose ("Baseline already exists in group, no further action is necessary.")
             return
         } # if
         else {
 
+            ## We need to check if the baseline to be added is an image baseline.
+            ## If it is, we need to check if an image baseline is already in this baseline group.
+            ## We can only have 1 image baseline per baseline group.
+
+            if ($baseline.baselineType -eq "Upgrade") {
+
+                Write-Verbose ("Target baseline is an image baseline. Checking for existing image baseline in baseline group.")
+
+                ## Iterate through baseline ID's to check
+                foreach ($baselineItem in $baselineGroup.baseline) {
+
+                    $baselineDetail = Get-Baseline -Id $baselineItem -ErrorAction Stop
+
+                    ## Bad news, there is already an image baseline in this baseline group.
+                    ## This needs to be removed prior to adding the target image baseline.
+                    if ($baselineDetail.baselineType -eq "Upgrade") {
+                        throw ("The target baseline group contains an existing image baseline (" + $baselineDetail.name + "). Remove this image baseline and retry the operation.")
+                    } # if
+
+                } # foreach
+
+            } # if
+
             ## Add specified baseline ID to array
             [void]$arrayList.Add($baseline.Id)
-            Write-Verbose ("[Add-baselineToGroup]Added baseline.")
+            Write-Verbose ("Added baseline.")
         } # else
 
 
         ## Create new baseline group spec
-        $baselineGroupUpdate = New-Object IntegrityApi.BaselineGroupManagerBaselineGroupInfo
-        Write-Verbose ("[Add-baselineToGroup]Created baseline group update object.")
+        Write-Verbose ("Creating baseline group spec.")
+        try {
+            $baselineGroupUpdate = New-Object IntegrityApi.BaselineGroupManagerBaselineGroupInfo -ErrorAction Stop
+            $baselineGroupUpdate.Key = $baselineGroup.Key
+            $baselineGroupUpdate.versionNumber = $baselineGroup.versionNumber
+            $baselineGroupUpdate.lastUpdateTimeSpecified = $true
+            $baselineGroupUpdate.lastUpdateTime = Get-Date
+            $baselineGroupUpdate.name = $baselineGroup.name
+            $baselineGroupUpdate.targetType = "HOST"
+            $baselineGroupUpdate.baseline = $arrayList
+            $baselineGroupUpdate.description = $baselineGroup.Description
 
-
-        ## Set baseline group spec properties
-        $BaselineGroupUpdate.Key = $baselineGroup.Key
-        $BaselineGroupUpdate.versionNumber = $baselineGroup.versionNumber
-        $BaselineGroupUpdate.lastUpdateTimeSpecified = $true
-        $BaselineGroupUpdate.lastUpdateTime = Get-Date
-        $BaselineGroupUpdate.name = $baselineGroup.name
-        $BaselineGroupUpdate.targetType = "HOST"
-        $BaselineGroupUpdate.baseline = $ArrayList
-        $BaselineGroupUpdate.description = $baselineGroup.Description
-
-        Write-Verbose ("[Add-baselineToGroup]Set baseline group update properties.")
+            Write-Verbose ("Baseline group spec created.")
+        } # try
+        catch {
+            throw ("Failed to create baseline group spec. " + $_.Exception.Message)
+        } # catch
 
 
         ## Apply update to baseline group
+        Write-Verbose ("Updating baseline group.")
         try {
-            $vumCon.vumWebService.SetBaselineGroupInfo($vumCon.vumServiceContent.baselineGroupManager,$BaselineGroupUpdate) | Out-Null
-            Write-Verbose ("[Add-baselineToGroup]Applied update to baseline group.")
+
+            $reqType = New-Object IntegrityApi.SetBaselineGroupInfoRequestType
+            $reqType._this = $vumCon.vumServiceContent.RetrieveVcIntegrityContentResponse.returnval.baselineGroupManager
+            $reqType.info = $baselineGroupUpdate
+
+            $svcRefVum = New-Object IntegrityApi.SetBaselineGroupInfoRequest($reqType)
+            $result = $vumCon.vumWebService.SetBaselineGroupInfo($svcRefVum)
+
+            Write-Verbose ("Applied update to baseline group.")
         } # try
         catch {
-            Write-Debug ("[Add-baselineToGroup]Failed to apply update to group.")
-            throw ("Failed to apply update to group. " + $_)
+            throw ("Failed to apply update to group. " + $_.Exception.Message)
         } # catch
 
-
-        Write-Verbose ("[Add-baselineToGroup]Completed baseline group " + $baselineGroupName)
-
+        Write-Verbose ("Completed baseline group " + $baselineGroupName)
 
     } # process
 
-
     end {
 
-        Write-Verbose ("[Add-baselineToGroup]All baseline groups complete.")
+        Write-Verbose ("All baseline groups complete.")
 
         ## Logoff session
         try {
-            $vumCon.vumWebService.VciLogout($vumCon.vumServiceContent.sessionManager)
-            Write-Verbose ("[Add-baselineToGroup]Disconnected from VUM API.")
+            $reqType = New-Object IntegrityApi.VciLogoutRequestType -ErrorAction Stop
+            $reqType._this = $vumCon.vumServiceContent.RetrieveVcIntegrityContentResponse.returnval.sessionManager
+            $svcRefVum = New-Object IntegrityApi.VciLogoutRequest($reqType)
+            $vumCon.vumWebService.VciLogout($svcRefVum) | Out-Null
+
+            Write-Verbose ("Disconnected from VUM API.")
         } # try
         catch {
-            Write-Warning ("[Add-baselineToGroup]Failed to disconnect from VUM API.")
+            Write-Warning ("Failed to disconnect from VUM API.")
         } # catch
 
-
-        Write-Verbose ("[Add-baselineToGroup]Function completed.")
+        Write-Verbose ("Function completed.")
 
     } # end
-
 
 } # function

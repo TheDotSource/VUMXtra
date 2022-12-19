@@ -33,6 +33,7 @@ function New-ImageBaseline {
     .NOTES
         01       13/11/18     Initial version.                                       A McNair
         02       23/12/19     Tidied up synopsis and added verbose output.           A McNair
+        03       30/11/22     Reworked for PowerCLI 12.7 and new API                 A McNair
     #>
 
     [CmdletBinding(SupportsShouldProcess=$true,ConfirmImpact="Low")]
@@ -47,59 +48,69 @@ function New-ImageBaseline {
     )
 
 
-    Write-Verbose ("[New-ImageBaseline]Function start.")
+    Write-Verbose ("Function start.")
 
     ## Get a VUM service connection object
     try {
         $vumCon = Connect-VUM -ErrorAction stop
-        Write-Verbose ("[New-ImageBaseline]Got VUM connection.")
+        Write-Verbose ("Got VUM connection.")
     } # try
     catch {
-        Write-Debug ("[New-ImageBaseline]Failed to connect to VUM instance.")
-        throw ("Failed to connect to VUM instance. The CMDlet returned " + $_)
+        throw ("Failed to connect to VUM instance. The CMDlet returned " + $_.Exception.Message)
     } # catch
 
 
     ## Check this image baseline doesn't exist
     if (Get-Baseline -Name $Name -ErrorAction SilentlyContinue) {
-        Write-Debug ("[New-ImageBaseline]Image baseline exists.")
         throw ("Image baseline already exists on this VUM instance.")
     } # if
 
 
     ## Get available images
     try {
-        $Images = $vumCon.vumWebService.QueryAvailableProducts($vumCon.vumServiceContent.upgradeProductManager, "Host")
-        Write-Verbose ("[New-ImageBaseline]Acquired available images.")
+        $reqType = New-Object IntegrityApi.QueryAvailableProductsRequestType
+        $reqType._this = $vumCon.vumServiceContent.RetrieveVcIntegrityContentResponse.returnval.upgradeProductManager
+        $reqType.productType = "Host"
+        
+        $svcRefVum = New-Object IntegrityApi.QueryAvailableProductsRequest($reqType)
+        
+        $images = ($vumCon.vumWebService.QueryAvailableProducts($svcRefVum)).QueryAvailableProductsResponse1
+
+        Write-Verbose ("Acquired available images.")
     } # try
     catch {
-        Write-Debug ("[New-ImageBaseline]Failed to query available images.")
-        throw ("Failed to query available images. " + $_)
+        throw ("Failed to query available images. " + $_.Exception.Message)
     } # catch
 
 
     ## Find key for specified image
-    $Key = ($Images | Where-Object {$_.profileName -eq $Image}).upgradeReleaseKey
+    $key = ($images | Where-Object {$_.profileName -eq $image}).upgradeReleaseKey
+
 
     ## Check we have an available image
     if (!$key) {
-        Write-Debug ("[New-ImageBaseline]Failed to find specified image.")
         throw ("The specified image does not exist on this VUM instance.")
     } # if
 
 
     ## Create a image baseline specification
-    $baselineSpec = New-Object IntegrityApi.HostUpgradeBaselineSpec
-    $baselineSpec.attribute = New-Object IntegrityApi.BaselineAttribute
-    $baselineSpec.name = $Name
-    $baselineSpec.description = $Description
-    $baselineSpec.attribute.targetType = "HOST"
-    $baselineSpec.attribute.type = "Upgrade"
-    $baselineSpec.upgradeTo = ""
-    $baselineSpec.upgradeToVersion = ""
-    $baselineSpec.upgradeReleaseKey = $Key
-    $baselineSpec.attribute.targetComponent = "HOST_GENERAL"
-    $baselineSpec.attribute.extraAttribute = "Singleton"
+    Write-Verbose ("Creating image baseline spec.")
+    try {
+        $baselineSpec = New-Object IntegrityApi.HostUpgradeBaselineSpec -ErrorAction Stop
+        $baselineSpec.attribute = New-Object IntegrityApi.BaselineAttribute -ErrorAction Stop
+        $baselineSpec.name = $name
+        $baselineSpec.description = $description
+        $baselineSpec.attribute.targetType = "HOST"
+        $baselineSpec.attribute.type = "Upgrade"
+        $baselineSpec.upgradeTo = ""
+        $baselineSpec.upgradeToVersion = ""
+        $baselineSpec.upgradeReleaseKey = $key
+        $baselineSpec.attribute.targetComponent = "HOST_GENERAL"
+        $baselineSpec.attribute.extraAttribute = "Singleton"
+    } # try
+    catch {
+        throw ("Failed to create image baseline spec. " + $_.Exception.Message)
+    } # catch
 
 
     ## Create new image baseline
@@ -108,36 +119,43 @@ function New-ImageBaseline {
         ## Apply shouldProcess
         if ($PSCmdlet.ShouldProcess($name)) {
 
-            $baselineID = $vumCon.vumWebService.CreateBaseline($vumCon.vumServiceContent.baselineManager, $baselineSpec)
+            $reqType = New-Object IntegrityApi.CreateBaselineRequestType -ErrorAction Stop
+            $reqType._this = $vumCon.vumServiceContent.RetrieveVcIntegrityContentResponse.returnval.baselineManager
+            $reqType.spec = $baselineSpec
+
+            $svcRefVum = New-Object IntegrityApi.CreateBaselineRequest($reqType)
+
+            $baselineID = ($vumCon.vumWebService.CreateBaseline($svcRefVum)).CreateBaselineResponse.returnval
         } # if
 
-        Write-Verbose ("[New-ImageBaseline]Image baseline created.")
+        Write-Verbose ("Image baseline created.")
     } # try
     catch {
-        Write-Debug ("[New-ImageBaseline]Failed to create image baseline.")
-        throw ("Failed to create image baseline. " + $_)
+        throw ("Failed to create image baseline. " + $_.Exception.Message)
     } # catch
 
 
     ## Generate return object
-    $ibObject = [pscustomobject]@{"Name" = $Name; "Description" = $Description; "Id" = $baselineID}
+    $ibObject = [pscustomobject]@{"Name" = $name; "Description" = $description; "Id" = $baselineID}
 
 
     ## Logoff session
     try {
-        $vumCon.vumWebService.VciLogout($vumCon.vumServiceContent.sessionManager)
-        Write-Verbose ("[New-ImageBaseline]Disconnected from VUM API.")
+        $reqType = New-Object IntegrityApi.VciLogoutRequestType -ErrorAction Stop
+        $reqType._this = $vumCon.vumServiceContent.RetrieveVcIntegrityContentResponse.returnval.sessionManager
+        $svcRefVum = New-Object IntegrityApi.VciLogoutRequest($reqType)
+        $vumCon.vumWebService.VciLogout($svcRefVum) | Out-Null
+
+        Write-Verbose ("Disconnected from VUM API.")
     } # try
     catch {
-        Write-Warning ("[New-ImageBaseline]Failed to disconnect from VUM API.")
+        Write-Warning ("Failed to disconnect from VUM API.")
     } # catch
 
 
-    Write-Verbose ("[New-ImageBaseline]Function completed.")
-
+    Write-Verbose ("Function completed.")
 
     ## Return object
-    return $IBObject
-
+    return $ibObject
 
 } # function

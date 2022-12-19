@@ -30,6 +30,7 @@ function New-BaselineGroup {
         01       17/10/18     Initial version.                                       A McNair
         02       23/12/19     Tidied up synopsis and added verbose output.           A McNair
                               Added pipeline input for baseline group name.
+        03       30/11/22     Reworked for PowerCLI 12.7 and new API                 A McNair
     #>
 
     [CmdletBinding(SupportsShouldProcess=$true,ConfirmImpact="Low")]
@@ -43,40 +44,52 @@ function New-BaselineGroup {
 
     begin {
 
-        Write-Verbose ("[New-BaselineGroup]Function start.")
+        Write-Verbose ("Function start.")
 
         ## Get a VUM service connection object
         try {
             $vumCon = Connect-VUM -ErrorAction stop
-            Write-Verbose ("[New-BaselineGroup]Got VUM connection.")
+            Write-Verbose ("Got VUM connection.")
         } # try
         catch {
-            Write-Debug ("[New-BaselineGroup]Failed to connect to VUM instance.")
-            throw ("Failed to connect to VUM instance. The CMDlet returned " + $_)
+            throw ("Failed to connect to VUM instance. The CMDlet returned " + $_.Exception.Message)
         } # catch
 
     } # begin
 
     process {
 
-        Write-Verbose ("[New-BaselineGroup]Creating baseline group " + $name)
+        Write-Verbose ("Creating baseline group " + $name)
+
+        $reqType = New-Object IntegrityApi.GetBaselineGroupInfoRequestType
+        $reqType._this = $vumCon.vumServiceContent.RetrieveVcIntegrityContentResponse.returnval.baselineGroupManager
+
 
         ## Check if this baseline group already exists
+        Write-Verbose ("Verifying baseline group does not already exist.")
+
         for ($i=0; $i -le 100; $i++) {
 
-            if ($vumCon.vumWebService.GetBaselineGroupInfo($vumCon.vumServiceContent.baselineGroupManager,$i)) {
+            $reqType.id = $i
 
-                $BaselineGroup = $vumCon.vumWebService.GetBaselineGroupInfo($vumCon.vumServiceContent.baselineGroupManager,$i)
+            try {
+                $svcRefVum = New-Object IntegrityApi.GetBaselineGroupInfoRequest($reqType) -ErrorAction Stop
+                $result = $vumCon.vumWebService.GetBaselineGroupInfo($svcRefVum)
 
-                ## If baseline group name matches Name parameter add it and break the loop
-                if ($Name -eq $BaselineGroup.name) {
+                $baselineGroup  = $result.GetBaselineGroupInfoResponse1
 
-                    Write-Verbose ("[New-BaselineGroup]Existing baseline group found.")
+            } # try
+            catch {
+                throw ("Failed to query for baseline group. " + $_.Exception.message)
+            } # catch
 
-                    ## This baseline group already exists, exit
-                    Throw ("This baseline group already exists on this VUM instance.")
 
-                } # if
+            if ($name -eq $baselineGroup.name) {
+
+                Write-Verbose ("Existing baseline group found.")
+
+                ## This baseline group already exists, exit
+                throw ("This baseline group already exists on this VUM instance.")
 
             } # if
 
@@ -85,20 +98,27 @@ function New-BaselineGroup {
 
         ## Create a new baseline group
         try {
-            $BaseLineGroupSpec = New-Object IntegrityApi.BaselineGroupManagerBaselineGroupSpec
-            $BaseLineGroupSpec.name = $name
-            $BaseLineGroupSpec.description = $description
-            $BaseLineGroupSpec.targetType = "HOST"
+            $baseLineGroupSpec = New-Object IntegrityApi.BaselineGroupManagerBaselineGroupSpec -ErrorAction Stop
+            $baseLineGroupSpec.name = $name
+            $baseLineGroupSpec.description = $description
+            $baseLineGroupSpec.targetType = "HOST"
 
             ## Apply shouldProcess
             if ($PSCmdlet.ShouldProcess($name)) {
 
-                $VCResult = $vumCon.vumWebService.CreateBaseLineGroup($vumCon.vumServiceContent.baselineGroupManager, $BaseLineGroupSpec)
+                $reqType = New-Object IntegrityApi.CreateBaselineGroupRequestType -ErrorAction Stop
+                $reqType._this = $vumCon.vumServiceContent.RetrieveVcIntegrityContentResponse.returnval.baselineGroupManager
+                $reqType.spec = $baseLineGroupSpec
+
+
+                $svcRefVum = New-Object IntegrityApi.CreateBaselineGroupRequest($reqType) -ErrorAction Stop
+                $vcResult = ($vumCon.vumWebService.CreateBaselineGroup($svcRefVum)).CreateBaselineGroupResponse.returnval
+
             } # if
 
         } # try
         catch {
-            throw ("Error creating baseline group. " + $_)
+            throw ("Error creating baseline group. " + $_.Exception.Message)
         } # catch
 
 
@@ -106,7 +126,7 @@ function New-BaselineGroup {
         $blObject = [pscustomobject]@{"Name" = $name; "Description" = $description; "Id" = $VCResult}
 
 
-        Write-Verbose ("[New-BaselineGroup]Completed baseline group " + $name)
+        Write-Verbose ("Completed baseline group " + $name)
 
 
         ## Return object
@@ -117,19 +137,23 @@ function New-BaselineGroup {
 
     end {
 
-        Write-Verbose ("[New-BaselineGroup]All baseline groups created.")
+        Write-Verbose ("All baseline groups created.")
 
         ## Logoff session
         try {
-            $vumCon.vumWebService.VciLogout($vumCon.vumServiceContent.sessionManager)
-            Write-Verbose ("[New-BaselineGroup]Disconnected from VUM API.")
+            $reqType = New-Object IntegrityApi.VciLogoutRequestType -ErrorAction Stop
+            $reqType._this = $vumCon.vumServiceContent.RetrieveVcIntegrityContentResponse.returnval.sessionManager
+            $svcRefVum = New-Object IntegrityApi.VciLogoutRequest($reqType)
+            $vumCon.vumWebService.VciLogout($svcRefVum) | Out-Null
+
+            Write-Verbose ("Disconnected from VUM API.")
         } # try
         catch {
-            Write-Warning ("[New-BaselineGroup]Failed to disconnect from VUM API.")
+            Write-Warning ("Failed to disconnect from VUM API.")
         } # catch
 
 
-        Write-Verbose ("[New-BaselineGroup]Function completed.")
+        Write-Verbose ("Function completed.")
 
     } # end
 
