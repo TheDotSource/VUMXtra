@@ -44,12 +44,15 @@ function Update-EntityBaselineGroup {
         https://github.com/TheDotSource/VUMXtra
 
     .NOTES
-        01       13/11/18     Initial version.                                      A McNair
-        02       23/12/19     Tidied up synopsis and added verbose output.          A McNair
+        01       13/11/18     Initial version.                                             A McNair
+        02       23/12/19     Tidied up synopsis and added verbose output.                 A McNair
                               Added pipeline input for entity.
+        03       22/12/22     Reworked for PowerCLI 12.7 and new API.                      A McNair
+                              Added support for clusters.
+                              Added option to override default host remediation settings.
     #>
 
-    [CmdletBinding(SupportsShouldProcess=$true,ConfirmImpact="High")]
+    [CmdletBinding(SupportsShouldProcess=$true,ConfirmImpact="Medium")]
     Param
     (
         [Parameter(Mandatory=$true,ValueFromPipeline=$false)]
@@ -71,7 +74,7 @@ function Update-EntityBaselineGroup {
             Write-Verbose ("Got VUM connection.")
         } # try
         catch {
-            throw ("Failed to connect to VUM instance. The CMDlet returned " + $_.Exception.Message)
+            throw ("Failed to connect to VUM instance. " + $_.Exception.Message)
         } # catch
 
 
@@ -116,30 +119,80 @@ function Update-EntityBaselineGroup {
 
         Write-Verbose ("Processing entity " + $entity.name)
 
+        ## Initialise array for leaf entities
+        $leafEntities = @()
 
-        ## Initiate a scan of the host
+
+        ## Things work a little differently depending on cluster or host target entity
+        switch ($entity) {
+
+            {$_.GetType().toString() -eq "VMware.VimAutomation.ViCore.Impl.V1.Inventory.VMHostImpl"} {
+
+                ## Leaf entity is the target host
+                $leafTypeValue = $entity.id.split("-",2)
+                $leafEntity = New-Object IntegrityApi.ManagedObjectReference
+                $leafEntity.type = $leafTypeValue[0]
+                $leafEntity.Value = $leafTypeValue[1]
+                $leafEntities += $leafEntity
+
+                ## Parent entity is the cluster this host belongs to.
+                $parentTypeValue = $entity.ParentId.split("-",2)
+                $parentEntity = New-Object IntegrityApi.ManagedObjectReference
+                $parentEntity.type = $parentTypeValue[0]
+                $parentEntity.Value = $parentTypeValue[1]
+
+                ## Specify an entity that we want to check compliance on
+                $complianceEntity = $leafEntity
+
+            } # host
+
+            {$_.GetType().toString() -eq "VMware.VimAutomation.ViCore.Impl.V1.Inventory.ClusterImpl"} {
+
+                ## Get all hosts belonging to this cluster
+                Write-Verbose ("Entity type is cluster. Getting hosts in this cluster.")
+
+                try {
+                    $vmHosts = $entity | Get-vmHost -ErrorAction Stop
+                    Write-Verbose ("Got " + $vmHosts.count + " hosts.")
+                } # try
+                catch {
+                    throw ("Failed to get hosts from tagret cluster. " + $_.Exception.Message)
+                } # catch
+
+
+                ## Leaf objects are hosts in this cluster. Create an array of these leaf entities
+                foreach ($vmHost in $vmHosts) {
+
+                    $leafTypeValue = $vmHost.id.split("-",2)
+                    $leafEntity = New-Object IntegrityApi.ManagedObjectReference
+                    $leafEntity.type = $leafTypeValue[0]
+                    $leafEntity.Value = $leafTypeValue[1]
+
+                    $leafEntities += $leafEntity
+
+                } # foreach
+
+                ## Parent entity is the target cluster
+                $parentTypeValue = $entity.id.split("-",2)
+                $parentEntity = New-Object IntegrityApi.ManagedObjectReference
+                $parentEntity.type = $parentTypeValue[0]
+                $parentEntity.Value = $parentTypeValue[1]
+
+                ## Specify an entity that we want to check compliance on
+                $complianceEntity = $parentEntity
+
+            } # cluster
+
+        } # switch
+
+
+        ## Initiate a scan of the host or cluster
         try {
-            Test-Compliance -Entity $Entity -ErrorAction Stop | Out-Null
+            Test-Compliance -Entity $entity -ErrorAction Stop | Out-Null
         } # try
         catch {
             throw ("Compliance scan failed on entity. " + $_.Exception.Message)
         } # catch
-
-        Write-Verbose ("Completed compliance scan of entity.")
-
-
-        ## Set parent and leaf objects
-        $leafTypeValue = $entity.id.split("-",2)
-        $leafEntity = New-Object IntegrityApi.ManagedObjectReference
-        $leafEntity.type = $leafTypeValue[0]
-        $leafEntity.Value = $leafTypeValue[1]
-
-        $parentTypeValue = $entity.ParentId.split("-",2)
-        $parentEntity = New-Object IntegrityApi.ManagedObjectReference
-        $parentEntity.type = $parentTypeValue[0]
-        $parentEntity.Value = $parentTypeValue[1]
-
-        Write-Verbose ("Entity object configured.")
 
 
         ## Query compliance status for specified baseline group
@@ -147,7 +200,7 @@ function Update-EntityBaselineGroup {
 
             $reqType = New-Object IntegrityApi.QueryBaselineGroupComplianceStatusRequestType
             $reqType._this = $vumCon.vumServiceContent.RetrieveVcIntegrityContentResponse.returnval.complianceStatusManager
-            $reqType.entity = $leafEntity
+            $reqType.entity = $complianceEntity
 
             $svcRefVum = New-Object IntegrityApi.QueryBaselineGroupComplianceStatusRequest($reqType)
             $complianceStatus = ($vumCon.vumWebService.QueryBaselineGroupComplianceStatus($svcRefVum)).QueryBaselineGroupComplianceStatusResponse1 | Where-Object {$_.key -eq $baselineGroup.key}
@@ -157,7 +210,6 @@ function Update-EntityBaselineGroup {
         catch {
             throw ("Failed to query compliance status of entity. " + $_.Exception.Message)
         } # catch
-
 
         ## Check if this entity is compliant with baseline group or not
         if ($complianceStatus.status -eq "Compliant") {
@@ -227,7 +279,7 @@ function Update-EntityBaselineGroup {
                 $reqType = New-Object IntegrityApi.RemediateRequestType
                 $reqType._this = $updateManager
                 $reqType.entity = $parentEntity
-                $reqType.leafEntity = $leafEntity
+                $reqType.leafEntity = $leafEntities
                 $reqType.spec = $remediationSpec
 
                 $mofTask = ($vumCon.vumWebService.Remediate_Task($reqType)).Remediate_TaskResponse.returnval
@@ -257,7 +309,7 @@ function Update-EntityBaselineGroup {
 
         while ($jobStatus.State -eq "Running") {
 
-            Write-Progress -Activity ("Applying Baseline Group to host " + $ESXiHost) -Status ($jobStatus.PercentComplete.ToString() + " percent complete.") -PercentComplete $jobStatus.PercentComplete
+            Write-Progress -Activity ("Applying Baseline Group to entity " + $entity.name) -Status ($jobStatus.PercentComplete.ToString() + " percent complete.") -PercentComplete $jobStatus.PercentComplete
 
             Write-Verbose ("Current task status is " + $jobStatus.State)
 

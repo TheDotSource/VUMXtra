@@ -28,8 +28,8 @@ function Update-HostRemediationConfig {
     .PARAMETER ClusterDisableDistributedPowerManagement
         Optional. Temporarily disbale cluster DPM before remediation. After remediation, it will be re-enabled.
 
-    .PARAMETER ClusterDisableHighAvailability
-        Optional. Temporarily disbale cluster High Availability before remediation. After remediation, it will be re-enabled.
+    .PARAMETER ClusterDisableHac
+        Optional. Temporarily disbale cluster high availability admission control before remediation. After remediation, it will be re-enabled.
 
     .PARAMETER ClusterDisableFaultTolerance
         Optional. Temporarily disbale cluster Fault Tolerance before remediation. After remediation, it will be re-enabled.
@@ -52,6 +52,9 @@ function Update-HostRemediationConfig {
     .PARAMETER ClusterMaxConcurrentRemediations
         Optional. The number of hosts to remediate in parallel. If 0 or not specified, the maximum concurrent remediations will be configured to "automatic".
 
+    .PARAMETER enableParallelRemediateOfMMHosts
+        Optional when specifying ClusterEnableParallelRemediation. Enable parallel remediation of maintenance mode hosts. Hosts not in maintenance mode will be skipped.
+
     .INPUTS
         IntegrityApi.HostRemediationScheduleOption. Host remediation configuration object.
 
@@ -59,12 +62,12 @@ function Update-HostRemediationConfig {
         IntegrityApi.HostRemediationScheduleOption. Updated host remediation configuration object.
 
     .EXAMPLE
-        $remediationConfig = Get-HostRemediationConfig | Set-HostRemediationConfig -ClusterEnableParallelRemediation $true -ClusterMaxConcurrentRemediations 2
+        $remediationConfig = Get-HostRemediationConfig | Update-HostRemediationConfig -ClusterEnableParallelRemediation $true -ClusterMaxConcurrentRemediations 2
 
         Create a remediation configuration object. Fetch the current config, then enable parallel remediation specifying a maximum of 2 hosts concurrently.
 
     .EXAMPLE
-        $remediationConfig = Get-HostRemediationConfig | Set-HostRemediationConfig -HostFailureAction Retry -HostRetryDelaySeconds 20 -HostNumberOfRetries 2 -HostEnableQuickBoot $true
+        $remediationConfig = Get-HostRemediationConfig | Update-HostRemediationConfig -HostFailureAction Retry -HostRetryDelaySeconds 20 -HostNumberOfRetries 2 -HostEnableQuickBoot $true
 
         Create a remediation configuration object. Fetch the current config, then set host failure action to retry with a delay of 20 seconds and 2 retries. Enable host Quick Boot.
 
@@ -82,21 +85,24 @@ function Update-HostRemediationConfig {
         [Parameter(Mandatory=$true,ValueFromPipeline=$true)]
         [IntegrityApi.HostRemediationScheduleOption]$HostRemediationConfig,
         [Parameter(ParameterSetName="retryConfig",Mandatory=$false,ValueFromPipeline=$false)]
+        [Parameter(ParameterSetName="multiConfig",Mandatory=$false,ValueFromPipeline=$false)]
         [ValidateSet("Retry","FailTask")]
         [string]$HostFailureAction,
         [Parameter(ParameterSetName="retryConfig",Mandatory=$true,ValueFromPipeline=$false)]
+        [Parameter(ParameterSetName="multiConfig",Mandatory=$true,ValueFromPipeline=$false)]
         [ValidateRange(1,6000)]
         [int]$HostRetryDelaySeconds,
         [Parameter(ParameterSetName="retryConfig",Mandatory=$true,ValueFromPipeline=$false)]
+        [Parameter(ParameterSetName="multiConfig",Mandatory=$true,ValueFromPipeline=$false)]
         [ValidateRange(1,100)]
         [int]$HostNumberOfRetries,
-        [Parameter(ParameterSetName="vmPowerAction",Mandatory=$false,ValueFromPipeline=$false)]
+        [Parameter(Mandatory=$false,ValueFromPipeline=$false)]
         [ValidateSet("DoNotChangeVMsPowerState","SuspendVMs","PowerOffVMs")]
         [string]$HostPreRemediationPowerAction,
         [Parameter(Mandatory=$false,ValueFromPipeline=$false)]
         [bool]$ClusterDisableDistributedPowerManagement,
         [Parameter(Mandatory=$false,ValueFromPipeline=$false)]
-        [bool]$ClusterDisableHighAvailability,
+        [bool]$ClusterDisableHac,
         [Parameter(Mandatory=$false,ValueFromPipeline=$false)]
         [bool]$ClusterDisableFaultTolerance,
         [Parameter(Mandatory=$false,ValueFromPipeline=$false)]
@@ -108,10 +114,15 @@ function Update-HostRemediationConfig {
         [Parameter(Mandatory=$false,ValueFromPipeline=$false)]
         [bool]$HostEnableQuickBoot,
         [Parameter(ParameterSetName="parallelRemediation",Mandatory=$false,ValueFromPipeline=$false)]
+        [Parameter(ParameterSetName="multiConfig",Mandatory=$false,ValueFromPipeline=$false)]
         [bool]$ClusterEnableParallelRemediation,
         [Parameter(ParameterSetName="parallelRemediation",Mandatory=$false,ValueFromPipeline=$false)]
+        [Parameter(ParameterSetName="multiConfig",Mandatory=$false,ValueFromPipeline=$false)]
         [ValidateRange(0,64)]
-        [int]$ClusterMaxConcurrentRemediations
+        [int]$ClusterMaxConcurrentRemediations,
+        [Parameter(ParameterSetName="parallelRemediation",Mandatory=$false,ValueFromPipeline=$false)]
+        [Parameter(ParameterSetName="multiConfig",Mandatory=$false,ValueFromPipeline=$false)]
+        [bool]$enableParallelRemediateOfMMHosts
     )
 
     begin {
@@ -179,10 +190,10 @@ function Update-HostRemediationConfig {
 
 
         ## Check if disable HAC has been specified.
-        if ($null -ne $ClusterDisableHighAvailability) {
+        if ($null -ne $ClusterDisableHac) {
 
-            Write-Verbose ("Setting Disable DPM to " + $ClusterDisableHighAvailability)
-            $hostRemediationConfig.disableHac = $ClusterDisableHighAvailability
+            Write-Verbose ("Setting Disable DPM to " + $ClusterDisableHac)
+            $hostRemediationConfig.disableHac = $ClusterDisableHac
             $hostRemediationConfig.disableHacSpecified = $true
 
         } # if
@@ -244,8 +255,16 @@ function Update-HostRemediationConfig {
             Write-Verbose ("Setting Parallel Remediation to " + $ClusterEnableParallelRemediation)
             $hostRemediationConfig.concurrentRemediationInCluster = $ClusterEnableParallelRemediation
             $hostRemediationConfig.concurrentRemediationInClusterSpecified = $true
-            $hostRemediationConfig.enableParallelRemediateOfMMHosts = $ClusterEnableParallelRemediation
-            $hostRemediationConfig.enableParallelRemediateOfMMHostsSpecified = $true
+
+            if ($enableParallelRemediateOfMMHosts) {
+                $hostRemediationConfig.enableParallelRemediateOfMMHosts = $true
+                $hostRemediationConfig.enableParallelRemediateOfMMHostsSpecified = $true
+            } # if
+            else {
+                $hostRemediationConfig.enableParallelRemediateOfMMHosts = $false
+                $hostRemediationConfig.enableParallelRemediateOfMMHostsSpecified = $true
+            } # else
+
 
             ## Check ClusterMaxConcurrentRemediations. If it's not specified, or the value is 0, we set to automatic.
             if ((!$ClusterMaxConcurrentRemediations) -or ($ClusterMaxConcurrentRemediations -eq 0)) {

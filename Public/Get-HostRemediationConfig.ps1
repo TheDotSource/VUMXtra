@@ -6,17 +6,16 @@ function Get-HostRemediationConfig {
     .DESCRIPTION
         Get the host remediation configuration from Update Manager.
 
-    .PARAMETER name
-        Name of the baseline group to remove.
-
     .INPUTS
         None.
 
     .OUTPUTS
-        None.
+        IntegrityApi.HostRemediationScheduleOption. Host remediation configuration object representing the current Update Manager configuration.
 
     .EXAMPLE
+        $hostConfig = Get-HostRemediationConfig
 
+        Get the current host remediation configuration from the connected Update Manager instance.
 
     .LINK
         https://github.com/TheDotSource/VUMXtra
