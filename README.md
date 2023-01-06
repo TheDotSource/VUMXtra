@@ -9,7 +9,7 @@ VUMXtra now requires PowerCLI 12.7 or above and PowerShell Core. VMWare have por
 
 Dropped support for Windows hosted vCenters. Most noteably the Import-VUMContent function will no longer import to a Windows hosted vCenter. Most likely other functions will still work, but have not been tested. If this is a requirement, please continue to use VUMXtra 1.2.
 
-Added functions to configure host remediation settings. This can be passed to Update-EntityBaselineGroup for remediation runtime settings, or applied as VUM default remediation settings.
+Added functions to configure host remediation settings. This can be passed to Update-EntityBaselineGroup for remediation runtime settings, or applied as VUM default remediation settings. This includes enabling host Quick Boot where the hardware is supported.
 
 Added support for cluster level remediation to Update-EntityBaselineGroup.
 
