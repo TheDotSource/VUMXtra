@@ -3,6 +3,8 @@ function New-ImageBaseline {
     .SYNOPSIS
         Creates a new image baseline in VUM.
 
+        With thanks to Lyuboslav Asenov @ VMWare for providing assistance with new Update Manager API.
+
     .DESCRIPTION
         Makes a call to the VC Integrity API to create a new VUM image baseline.
 
@@ -56,7 +58,7 @@ function New-ImageBaseline {
         Write-Verbose ("Got VUM connection.")
     } # try
     catch {
-        throw ("Failed to connect to VUM instance. The CMDlet returned " + $_.Exception.Message)
+        throw ("Failed to connect to VUM instance. " + $_.Exception.Message)
     } # catch
 
 
@@ -71,9 +73,9 @@ function New-ImageBaseline {
         $reqType = New-Object IntegrityApi.QueryAvailableProductsRequestType
         $reqType._this = $vumCon.vumServiceContent.RetrieveVcIntegrityContentResponse.returnval.upgradeProductManager
         $reqType.productType = "Host"
-        
+
         $svcRefVum = New-Object IntegrityApi.QueryAvailableProductsRequest($reqType)
-        
+
         $images = ($vumCon.vumWebService.QueryAvailableProducts($svcRefVum)).QueryAvailableProductsResponse1
 
         Write-Verbose ("Acquired available images.")

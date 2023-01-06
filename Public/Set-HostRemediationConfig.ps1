@@ -1,34 +1,42 @@
-function Get-HostRemediationConfig {
+function Set-HostRemediationConfig {
     <#
     .SYNOPSIS
-        Get the host remediation configuration from Update Manager.
+        Apply a host remediation configuration to an Update Manager.
 
         With thanks to Lyuboslav Asenov @ VMWare for providing assistance with new Update Manager API.
 
     .DESCRIPTION
-        Get the host remediation configuration from Update Manager.
+        Apply a host remediation configuration to an Update Manager.
+        The configuration object can be fetched and updated with the Get-HostRemediationConfig and Update-HostRemediation functions respectively.
 
     .INPUTS
-        None.
+        IntegrityApi.HostRemediationScheduleOption. Host remediation configuration object to apply to the Update Manager instance.
 
     .OUTPUTS
-        IntegrityApi.HostRemediationScheduleOption. Host remediation configuration object representing the current Update Manager configuration.
+        None.
 
     .EXAMPLE
-        $hostConfig = Get-HostRemediationConfig
+        Set-HostRemediationConfig -HostRemediationConfig $newConfig
 
-        Get the current host remediation configuration from the connected Update Manager instance.
+        Configure the default VUM host remediation settings as per the configuration object (see Get-HostRemediationConfig and Update-HostRemediation functions).
+
+    .EXAMPLE
+        Get-HostRemediationConfig | Update-HostRemediationConfig -HostFailureAction FailTask | Set-HostRemediationConfig
+
+        Use the pipeline to reconfigure VUM default host remediation configuration.
 
     .LINK
         https://github.com/TheDotSource/VUMXtra
 
     .NOTES
-        01       13/12/22     Initial version.                                      A McNair
+        01       03/01/23     Initial version.                                      A McNair
     #>
 
     [CmdletBinding()]
     Param
     (
+        [Parameter(Mandatory=$true,ValueFromPipeline=$true)]
+        [IntegrityApi.HostRemediationScheduleOption]$HostRemediationConfig
     )
 
     Write-Verbose ("Function start.")
@@ -43,8 +51,9 @@ function Get-HostRemediationConfig {
     } # catch
 
 
-    ## Query the "config" property path
-    ## This gives us configuration objects for Host Remediation, Guest Remediation Rollback and 3rd party modules
+
+    ## In addition to the host remediation config, we also need to set guest remediation config.
+    ## Since we aren't specifying that here, get the current configuration
 
     Write-Verbose ("Configuring property collector object.")
     try {
@@ -70,8 +79,6 @@ function Get-HostRemediationConfig {
     } # catch
 
 
-    Write-Verbose ("Querying Update Manager for current Host Remediation Settings.")
-
     try {
         $propertyCollector = $vumCon.vumServiceContent.RetrieveVcIntegrityContentResponse.returnval.propertyCollector
         $reqType = New-Object IntegrityApi.RetrievePropertiesRequestType -ErrorAction Stop
@@ -80,10 +87,36 @@ function Get-HostRemediationConfig {
 
         $svcrefVum = New-Object IntegrityApi.RetrievePropertiesRequest($reqType) -ErrorAction Stop
 
-        $hostRemediationConfig = (($vumCon.vumWebService.RetrieveProperties($svcRefVum)).RetrievePropertiesResponse1.propSet | Where-Object {$_.name -eq "config"}).val.hostRemediationScheduleOption
+        ## Get current Update Manager config and append new host remediation config
+        $vumConfig  = ($vumCon.vumWebService.RetrieveProperties($svcRefVum)).RetrievePropertiesResponse1.propSet.val
+        $vumConfig.hostRemediationScheduleOption = $HostRemediationConfig
     } # try
     catch {
         throw ("Failed to query update manager. " + $_.Exception.Message)
+    } # catch
+
+    ## Create the configuration request object
+    try {
+        $mo = New-Object IntegrityApi.ManagedObjectReference -ErrorAction Stop
+        $mo.type = "VcIntegrity"
+        $mo.value = "Integrity.VcIntegrity"
+
+        $reqType = New-Object IntegrityApi.SetConfigRequestType
+        $reqType._this = $mo
+        $reqType.config = $vumConfig
+    } # try
+    catch {
+        throw ("Failed to create the configuration request object. " + $_.Exception.Message)
+    } # catch
+
+
+    ## Send configuration request
+    try {
+        $svcrefVum = New-Object IntegrityApi.SetConfigRequest($reqType)
+        $vumCon.vumWebService.SetConfig($svcrefVum) | Out-Null
+    } # try
+    catch {
+        throw ("Failed to apply configuration. " + $_.Exception.Message)
     } # catch
 
 
@@ -101,8 +134,5 @@ function Get-HostRemediationConfig {
     } # catch
 
     Write-Verbose ("Function completed.")
-
-    ## Return host config
-    return $hostRemediationConfig
 
 } # function

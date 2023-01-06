@@ -3,6 +3,8 @@ function Update-EntityBaselineGroup {
     .SYNOPSIS
         Remediates a host against a baseline group.
 
+        With thanks to Lyuboslav Asenov @ VMWare for providing assistance with new Update Manager API.
+
     .DESCRIPTION
         Makes a call to the VC Integrity API to remediate a host or cluster against a baseline group.
 
@@ -80,31 +82,31 @@ function Update-EntityBaselineGroup {
 
         $reqType = New-Object IntegrityApi.GetBaselineGroupInfoRequestType
         $reqType._this = $vumCon.vumServiceContent.RetrieveVcIntegrityContentResponse.returnval.baselineGroupManager
-    
+
         ## Verify that the baseline group exists
         for ($i=0; $i -le 100; $i++) {
-    
+
             $reqType.id = $i
-    
+
             try {
                 $svcRefVum = New-Object IntegrityApi.GetBaselineGroupInfoRequest($reqType) -ErrorAction Stop
                 $result = $vumCon.vumWebService.GetBaselineGroupInfo($svcRefVum)
-    
+
                 ## When baseline is found break out of loop to continue function
                 if (($result.GetBaselineGroupInfoResponse1).name -eq $baselineGroupName) {
-    
+
                     $baselineGroup  = $result.GetBaselineGroupInfoResponse1
                     Break
-    
+
                 } # if
             } # try
             catch {
                 throw ("Failed to query for baseline group. " + $_.Exception.message)
             } # catch
-    
+
         } # for
-    
-    
+
+
         ## Check we have a baseline group to work with
         if (!$baselineGroup) {
             throw ("The specified baseline group was not found on this VUM instance.")

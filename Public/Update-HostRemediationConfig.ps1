@@ -3,6 +3,8 @@ function Update-HostRemediationConfig {
     .SYNOPSIS
         Change a configuration item on a host remediation configuration object.
 
+        With thanks to Lyuboslav Asenov @ VMWare for providing assistance with new Update Manager API.
+
     .DESCRIPTION
         Change a configuration item on a host remediation configuration object.
         The base configuration object is generate from Get-HostRemediationConfig and can be piped to this function (see examples).
@@ -51,9 +53,17 @@ function Update-HostRemediationConfig {
 
     .PARAMETER ClusterMaxConcurrentRemediations
         Optional. The number of hosts to remediate in parallel. If 0 or not specified, the maximum concurrent remediations will be configured to "automatic".
+        Not applicable to vSAN enabled clusters, these will always be remediated serially.
+        A note on the behaviour of the VUM GUI versus the API:
+            * On the GUI, the user must select "Enabled for hosts in maintenance mode" - this will skip all hosts not in MM.
+              It is not possible to parallel remediate non-MM hosts via the GUI.
+              If the user does not explicitely set enableParallelRemediateOfMMHosts, it will be set as true to mimick GUI behaviour.
+            * Parallel remediation of non-MM hosts is possible at runtime via the API.
+              The user must explicitely set enableParallelRemediateOfMMHosts as false at remediation runtime. This will result in non-MM hosts being remediated in parallel.
 
     .PARAMETER enableParallelRemediateOfMMHosts
         Optional when specifying ClusterEnableParallelRemediation. Enable parallel remediation of maintenance mode hosts. Hosts not in maintenance mode will be skipped.
+        See note above on ClusterMaxConcurrentRemediations.
 
     .INPUTS
         IntegrityApi.HostRemediationScheduleOption. Host remediation configuration object.
@@ -71,11 +81,21 @@ function Update-HostRemediationConfig {
 
         Create a remediation configuration object. Fetch the current config, then set host failure action to retry with a delay of 20 seconds and 2 retries. Enable host Quick Boot.
 
+    .EXAMPLE
+        Update-EntityBaselineGroup -baselineGroupName "Sample Baseline Group" -entity $cluster -HostRemediationConfig $remediationConfig
+
+        Remediate entity $cluster with "Sample Baseline Group", using the preconfigured remediation options as created in preceding examples.
+
+    .EXAMPLE
+        Set-HostRemediationConfig -HostRemediationConfig $newConfig
+
+        Configure the default VUM host remediation settings as per the configuration object created in the preceding examples.
+
     .LINK
         https://github.com/TheDotSource/VUMXtra
 
     .NOTES
-        01       13/12/22     Initial version.                                      A McNair
+        01       06/01/22     Initial version.                                      A McNair
     #>
 
     [OutputType([IntegrityApi.HostRemediationScheduleOption])]
@@ -85,17 +105,14 @@ function Update-HostRemediationConfig {
         [Parameter(Mandatory=$true,ValueFromPipeline=$true)]
         [IntegrityApi.HostRemediationScheduleOption]$HostRemediationConfig,
         [Parameter(ParameterSetName="retryConfig",Mandatory=$false,ValueFromPipeline=$false)]
-        [Parameter(ParameterSetName="multiConfig",Mandatory=$false,ValueFromPipeline=$false)]
         [ValidateSet("Retry","FailTask")]
         [string]$HostFailureAction,
-        [Parameter(ParameterSetName="retryConfig",Mandatory=$true,ValueFromPipeline=$false)]
-        [Parameter(ParameterSetName="multiConfig",Mandatory=$true,ValueFromPipeline=$false)]
-        [ValidateRange(1,6000)]
-        [int]$HostRetryDelaySeconds,
-        [Parameter(ParameterSetName="retryConfig",Mandatory=$true,ValueFromPipeline=$false)]
-        [Parameter(ParameterSetName="multiConfig",Mandatory=$true,ValueFromPipeline=$false)]
+        [Parameter(ParameterSetName="retryConfig",Mandatory=$false,ValueFromPipeline=$false)]
+        [ValidateRange(60,360000)]
+        [int]$HostRetryDelaySeconds = 60,
+        [Parameter(ParameterSetName="retryConfig",Mandatory=$false,ValueFromPipeline=$false)]
         [ValidateRange(1,100)]
-        [int]$HostNumberOfRetries,
+        [int]$HostNumberOfRetries = 3,
         [Parameter(Mandatory=$false,ValueFromPipeline=$false)]
         [ValidateSet("DoNotChangeVMsPowerState","SuspendVMs","PowerOffVMs")]
         [string]$HostPreRemediationPowerAction,
@@ -113,21 +130,27 @@ function Update-HostRemediationConfig {
         [bool]$HostDisableMediaDevices,
         [Parameter(Mandatory=$false,ValueFromPipeline=$false)]
         [bool]$HostEnableQuickBoot,
-        [Parameter(ParameterSetName="parallelRemediation",Mandatory=$false,ValueFromPipeline=$false)]
-        [Parameter(ParameterSetName="multiConfig",Mandatory=$false,ValueFromPipeline=$false)]
+        [Parameter(Mandatory=$false,ValueFromPipeline=$false)]
         [bool]$ClusterEnableParallelRemediation,
-        [Parameter(ParameterSetName="parallelRemediation",Mandatory=$false,ValueFromPipeline=$false)]
-        [Parameter(ParameterSetName="multiConfig",Mandatory=$false,ValueFromPipeline=$false)]
+        [Parameter(Mandatory=$false,ValueFromPipeline=$false)]
         [ValidateRange(0,64)]
         [int]$ClusterMaxConcurrentRemediations,
-        [Parameter(ParameterSetName="parallelRemediation",Mandatory=$false,ValueFromPipeline=$false)]
-        [Parameter(ParameterSetName="multiConfig",Mandatory=$false,ValueFromPipeline=$false)]
+        [Parameter(Mandatory=$false,ValueFromPipeline=$false)]
         [bool]$enableParallelRemediateOfMMHosts
     )
 
     begin {
 
         Write-Verbose ("Function start.")
+
+        ## If ClusterMaxConcurrentRemediations or enableParallelRemediateOfMMHosts, we need to ensure that ClusterEnableParallelRemediation is true
+        if ($ClusterMaxConcurrentRemediations -or $enableParallelRemediateOfMMHosts) {
+
+            if (!$ClusterEnableParallelRemediation) {
+                throw ("Parallel remediation options set, but -ClusterEnableParallelRemediation has not been specified.")
+            } # if
+
+        } # if
 
     } # begin
 
@@ -162,8 +185,11 @@ function Update-HostRemediationConfig {
                 ## Set failure action to FailTask
                 $hostRemediationConfig.failureAction = "FailTask"
 
-                $hostRemediationConfig.retryDelaySpecified = $false
-                $hostRemediationConfig.numberOfRetriesSpecified = $false
+                ## The API seems to expect these to be enabled with a value of "1", even if we are configuring this for FailTask
+                $hostRemediationConfig.retryDelaySpecified = $true
+                $hostRemediationConfig.retryDelay = 1
+                $hostRemediationConfig.numberOfRetriesSpecified = $true
+                $hostRemediationConfig.numberOfRetries = 1
 
             } # failTask
 
@@ -171,7 +197,7 @@ function Update-HostRemediationConfig {
 
 
         ## Check if a VM power action has been specified
-        if ($HostPreRemediationPowerAction) {
+        if ($PSBoundParameters.ContainsKey("HostPreRemediationPowerAction")) {
 
             $hostRemediationConfig.preRemediationPowerAction = $HostPreRemediationPowerAction
             Write-Verbose ("VM power action has been set to " + $HostPreRemediationPowerAction)
@@ -180,7 +206,7 @@ function Update-HostRemediationConfig {
 
 
         ## Check if disable DPM has been specified.
-        if ($null -ne $ClusterDisableDistributedPowerManagement) {
+        if ($PSBoundParameters.ContainsKey("ClusterDisableDistributedPowerManagement")) {
 
             Write-Verbose ("Setting Disable DPM to " + $ClusterDisableDistributedPowerManagement)
             $hostRemediationConfig.disableDpm = $ClusterDisableDistributedPowerManagement
@@ -190,7 +216,7 @@ function Update-HostRemediationConfig {
 
 
         ## Check if disable HAC has been specified.
-        if ($null -ne $ClusterDisableHac) {
+        if ($PSBoundParameters.ContainsKey("ClusterDisableHac")) {
 
             Write-Verbose ("Setting Disable DPM to " + $ClusterDisableHac)
             $hostRemediationConfig.disableHac = $ClusterDisableHac
@@ -200,7 +226,7 @@ function Update-HostRemediationConfig {
 
 
         ## Check if disable FT has been specified.
-        if ($null -ne $ClusterDisableFaultTolerance) {
+        if ($PSBoundParameters.ContainsKey("ClusterDisableFaultTolerance")) {
 
             Write-Verbose ("Setting Disable DPM to " + $ClusterDisableFaultTolerance)
             $hostRemediationConfig.disableFt = $ClusterDisableFaultTolerance
@@ -210,7 +236,7 @@ function Update-HostRemediationConfig {
 
 
         ## Check if allow PXE booted hosts has been specified.
-        if ($null -ne $HostEnablePXEbootHostPatching) {
+        if ($PSBoundParameters.ContainsKey("HostEnablePXEbootHostPatching")) {
 
             Write-Verbose ("Setting Allow PXE Booted Hosts to " + $HostEnablePXEbootHostPatching)
             $hostRemediationConfig.allowStatelessRemediation = $HostEnablePXEbootHostPatching
@@ -220,7 +246,7 @@ function Update-HostRemediationConfig {
 
 
         ## Check if evacuateOfflineVMs has been specified.
-        if ($null -ne $HostEvacuateOfflineVMs) {
+        if ($PSBoundParameters.ContainsKey("HostEvacuateOfflineVMs")) {
 
             Write-Verbose ("Setting Evacuate Powered Off and Suspended VMs to " + $HostEvacuateOfflineVMs)
             $hostRemediationConfig.evacuateOfflineVMs = $HostEvacuateOfflineVMs
@@ -230,7 +256,7 @@ function Update-HostRemediationConfig {
 
 
         ## Check if disconnectRemovableDevices has been specified.
-        if ($null -ne $HostDisableMediaDevices) {
+        if ($PSBoundParameters.ContainsKey("HostDisableMediaDevices")) {
 
             Write-Verbose ("Setting Disconnect Removable Devices to " + $HostDisableMediaDevices)
             $hostRemediationConfig.disconnectRemovableDevices = $HostDisableMediaDevices
@@ -240,7 +266,7 @@ function Update-HostRemediationConfig {
 
 
         ## Check if enableQuickBoot has been specified.
-        if ($null -ne $HostEnableQuickBoot) {
+        if ($PSBoundParameters.ContainsKey("HostEnableQuickBoot")) {
 
             Write-Verbose ("Setting Enable Quick Boot to " + $HostEnableQuickBoot)
             $hostRemediationConfig.enableLoadEsx = $HostEnableQuickBoot
@@ -250,18 +276,29 @@ function Update-HostRemediationConfig {
 
 
         ## Check if parallelRemediation has been specified.
-        if ($null -ne $ClusterEnableParallelRemediation) {
+        if ($PSBoundParameters.ContainsKey("ClusterEnableParallelRemediation")) {
+
+            ## There is a quirk of the GUI versus the API.
+            ## In the GUI, the user must select "Enabled for hosts in maintenance mode" to enable parallel remediation.
+            ## However this will skip all hosts not in MM mode.
+            ## Oddly, enabling parallel remediation without MM hosts via API is possible.
+            ## An unelegant solution is to set enableParallelRemediateOfMMHosts to true is it's not explicitely provided by the user, resuling in behaviour as per GUI.
+            ## If it is specificed as false, then we set it to false to allow the user to perform parallel remediation at runtime.
 
             Write-Verbose ("Setting Parallel Remediation to " + $ClusterEnableParallelRemediation)
             $hostRemediationConfig.concurrentRemediationInCluster = $ClusterEnableParallelRemediation
             $hostRemediationConfig.concurrentRemediationInClusterSpecified = $true
 
-            if ($enableParallelRemediateOfMMHosts) {
-                $hostRemediationConfig.enableParallelRemediateOfMMHosts = $true
+            if ($PSBoundParameters.ContainsKey("enableParallelRemediateOfMMHosts")) {
+
+                ## The user has explicitely set this parameter, adhere to their preference.
+                $hostRemediationConfig.enableParallelRemediateOfMMHosts = $enableParallelRemediateOfMMHosts
                 $hostRemediationConfig.enableParallelRemediateOfMMHostsSpecified = $true
             } # if
             else {
-                $hostRemediationConfig.enableParallelRemediateOfMMHosts = $false
+
+                ## The user has not specified this parameter. We will assume GUI behaviour and set this to true.
+                $hostRemediationConfig.enableParallelRemediateOfMMHosts = $true
                 $hostRemediationConfig.enableParallelRemediateOfMMHostsSpecified = $true
             } # else
 

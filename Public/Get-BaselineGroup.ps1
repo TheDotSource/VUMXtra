@@ -3,6 +3,8 @@ function Get-BaselineGroup {
     .SYNOPSIS
         Gets a list of baseline groups from VUM.
 
+        With thanks to Lyuboslav Asenov @ VMWare for providing assistance with new Update Manager API.
+
     .DESCRIPTION
         Makes a call to the VC Integrity API to get a list of baseline groups.
 
@@ -49,7 +51,7 @@ function Get-BaselineGroup {
         Write-Verbose ("Got VUM connection.")
     } # try
     catch {
-        throw ("Failed to connect to VUM instance. The CMDlet returned " + $_.Exception.Message)
+        throw ("Failed to connect to VUM instance. " + $_.Exception.Message)
     } # catch
 
 

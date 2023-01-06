@@ -166,8 +166,8 @@ function Connect-VUM {
     ## Create request
     try {
         $mo = New-Object IntegrityApi.ManagedObjectReference -ErrorAction Stop
-        $mo.type = 'VcIntegrity'
-        $mo.value = 'Integrity.VcIntegrity'
+        $mo.type = "VcIntegrity"
+        $mo.value = "Integrity.VcIntegrity"
 
         $reqType = New-Object IntegrityApi.RetrieveVcIntegrityContentRequestType -ErrorAction Stop
         $reqType._this = $mo
@@ -191,9 +191,9 @@ function Connect-VUM {
         $reqType.sessionId = $sessionManager.CurrentSession.Key
         $reqType.locale = $sessionManager.CurrentSession.Locale
         $reqType._this = $vumServiceContent.RetrieveVcIntegrityContentResponse.returnval.sessionManager
-        
+
         $svcRefVum = New-Object IntegrityApi.VciLoginRequest($reqType) -ErrorAction Stop
-        
+
         $vumWebService.VciLogin($svcRefVum)
     } # try
     catch {

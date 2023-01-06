@@ -3,6 +3,8 @@ function Import-VUMContent {
     .SYNOPSIS
         This function imports an ESXi image or patch to a VUM instance.
 
+        With thanks to Lyuboslav Asenov @ VMWare for providing assistance with new Update Manager API.
+
     .DESCRIPTION
         This function uses a combination of file copy and VC Integrity API to perform content import on a VUM instance.
         The file is first copied to the VCSA to a known location on the local file system.
@@ -88,7 +90,7 @@ function Import-VUMContent {
             Write-Verbose ("Got VUM connection.")
         } # try
         catch {
-            throw ("Failed to connect to VUM instance. The CMDlet returned " + $_.Exception.Message)
+            throw ("Failed to connect to VUM instance. " + $_.Exception.Message)
         } # catch
 
 

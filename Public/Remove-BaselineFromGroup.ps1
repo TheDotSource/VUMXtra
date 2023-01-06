@@ -3,6 +3,8 @@ function Remove-BaselineFromGroup {
     .SYNOPSIS
         Removes a baseline from a VUM baseline group.
 
+        With thanks to Lyuboslav Asenov @ VMWare for providing assistance with new Update Manager API.
+
     .DESCRIPTION
         Makes a call to the VC Integrity API to remove a baseline from a VUM baseline group.
 
@@ -51,7 +53,7 @@ function Remove-BaselineFromGroup {
             Write-Verbose ("Got VUM connection.")
         } # try
         catch {
-            throw ("Failed to connect to VUM instance. The CMDlet returned " + $_.Exception.Message)
+            throw ("Failed to connect to VUM instance. " + $_.Exception.Message)
         } # catch
 
     } # begin
