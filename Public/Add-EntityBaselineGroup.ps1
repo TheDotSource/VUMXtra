@@ -3,6 +3,8 @@ function Add-EntityBaselineGroup {
     .SYNOPSIS
         Attaches a baseline group to host or cluster.
 
+        With thanks to Lyuboslav Asenov @ VMWare for providing assistance with new Update Manager API.
+
     .DESCRIPTION
         Makes a call to the VC Integrity API to attach a baseline group to a host or cluster.
 
@@ -44,6 +46,7 @@ function Add-EntityBaselineGroup {
         01       13/11/18     Initial version.                                       A McNair
         02       23/12/19     Tidied up synopsis and added verbose output.           A McNair
                               Added pipeline for entities.
+        03       30/11/22     Reworked for PowerCLI 12.7 and new API                 A McNair
     #>
 
     [CmdletBinding()]
@@ -59,37 +62,48 @@ function Add-EntityBaselineGroup {
 
     begin {
 
-        Write-Verbose ("[Add-EntityBaselineGroup]Function start.")
+        Write-Verbose ("Function start.")
 
         ## Get a VUM service connection object
         try {
             $vumCon = Connect-VUM -ErrorAction stop
-            Write-Verbose ("[Add-EntityBaselineGroup]Got VUM connection.")
+            Write-Verbose ("Got VUM connection.")
         } # try
         catch {
-            Write-Debug ("[Add-EntityBaselineGroup]Failed to connect to VUM instance.")
-            throw ("Failed to connect to VUM instance. The CMDlet returned " + $_)
+            throw ("Failed to connect to VUM instance. " + $_.Exception.Message)
         } # catch
 
 
-        ## Get the baseline group object
+        ## Get baseline group object
+        Write-Verbose ("Getting baseline group object.")
+
+        $reqType = New-Object IntegrityApi.GetBaselineGroupInfoRequestType
+        $reqType._this = $vumCon.vumServiceContent.RetrieveVcIntegrityContentResponse.returnval.baselineGroupManager
+
         for ($i=0; $i -le 100; $i++) {
 
-            ## When baseline is found break out of loop to continue function
-            if (($vumCon.vumWebService.GetBaselineGroupInfo($vumCon.vumServiceContent.baselineGroupManager,$i)).name -eq $baselineGroupName) {
+            $reqType.id = $i
 
-                $BaselineGroup = $vumCon.vumWebService.GetBaselineGroupInfo($vumCon.vumServiceContent.baselineGroupManager,$i)
-                Write-Verbose ("[Add-EntityBaselineGroup]Found baseline group " + $baselineGroupName)
-                Break
+            try {
+                $svcRefVum = New-Object IntegrityApi.GetBaselineGroupInfoRequest($reqType) -ErrorAction Stop
+                $result = $vumCon.vumWebService.GetBaselineGroupInfo($svcRefVum)
 
-            } # if
+                ## When baseline is found break out of loop to continue function
+                if (($result.GetBaselineGroupInfoResponse1).name -eq $baselineGroupName) {
+
+                    $baselineGroup  = $result.GetBaselineGroupInfoResponse1
+                    Break
+
+                } # if
+            } # try
+            catch {
+                throw ("Failed to query for baseline group. " + $_.Exception.message)
+            } # catch
 
         } # for
 
-
         ## Check we have a baseline group to work with
         if (!$baselineGroup) {
-            Write-Debug ("[Add-EntityBaselineGroup]Baseline group not found.")
             throw ("The specified baseline group was not found on this VUM instance.")
         } # if
 
@@ -99,7 +113,7 @@ function Add-EntityBaselineGroup {
 
     process {
 
-        Write-Verbose ("[Add-EntityBaselineGroup]Processing entity " + $entity.name)
+        Write-Verbose ("Processing entity " + $entity.name)
 
         ## Set object
         $parentTypeValue = $entity.Id.split("-",2)
@@ -107,40 +121,49 @@ function Add-EntityBaselineGroup {
         $entityObj.type = $parentTypeValue[0]
         $entityObj.Value = $parentTypeValue[1]
 
-        Write-Verbose ("[Add-EntityBaselineGroup]Entity object configured.")
+        Write-Verbose ("Entity object configured.")
 
 
-        ## Attach to host
+        ## Attach to host or cluster
+        Write-Verbose ("Attaching baseline group to entity.")
+
         try {
-            $vumCon.vumWebService.AssignBaselineGroupToEntity($vumCon.vumServiceContent.baselineGroupManager,$entityObj, $baselineGroup.Key) | Out-Null
-            Write-Verbose ("[Add-EntityBaselineGroup]Baseline group assigned.")
+            $reqType = New-Object IntegrityApi.AssignBaselineGroupToEntityRequestType -ErrorAction Stop
+            $reqType._this = $vumCon.vumServiceContent.RetrieveVcIntegrityContentResponse.returnval.baselineGroupManager
+            $reqType.entity = $entityObj
+            $reqType.group = $baselineGroup.key
+
+            $svcRefVum = New-Object IntegrityApi.AssignBaselineGroupToEntityRequest($reqType) -ErrorAction Stop
+
+            $vumCon.vumWebService.AssignBaselineGroupToEntity($svcRefVum) | Out-Null
+            Write-Verbose ("Baseline group assigned.")
         } # try
         catch {
-            Write-Debug ("[Add-EntityBaselineGroup]Failed to assign baseline group.")
-            throw ("Failed to assign baseline group. " + $_)
+            throw ("Failed to assign baseline group. " + $_.Exception.Message)
         } # catch
 
-
-        Write-Verbose ("[Add-EntityBaselineGroup]Completed entity " + $entity.name)
-
+        Write-Verbose ("Completed entity " + $entity.name)
 
     } # process
 
     end {
 
-        Write-Verbose ("[Add-EntityBaselineGroup]All entities completed.")
+        Write-Verbose ("All entities completed.")
 
         ## Logoff session
         try {
-            $vumCon.vumWebService.VciLogout($vumCon.vumServiceContent.sessionManager)
-            Write-Verbose ("[Add-EntityBaselineGroup]Disconnected from VUM API.")
+            $reqType = New-Object IntegrityApi.VciLogoutRequestType -ErrorAction Stop
+            $reqType._this = $vumCon.vumServiceContent.RetrieveVcIntegrityContentResponse.returnval.sessionManager
+            $svcRefVum = New-Object IntegrityApi.VciLogoutRequest($reqType)
+            $vumCon.vumWebService.VciLogout($svcRefVum) | Out-Null
+
+            Write-Verbose ("Disconnected from VUM API.")
         } # try
         catch {
-            Write-Warning ("[Add-EntityBaselineGroup]Failed to disconnect from VUM API.")
+            Write-Warning ("Failed to disconnect from VUM API.")
         } # catch
 
-
-        Write-Verbose ("[Add-EntityBaselineGroup]Function completed.")
+        Write-Verbose ("Function completed.")
 
     } # end
 
