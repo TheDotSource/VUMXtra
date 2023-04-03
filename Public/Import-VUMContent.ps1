@@ -207,7 +207,7 @@ function Import-VUMContent {
 
         ## Wait for task to complete
         Write-Verbose ("Waiting on import task to complete.")
-        Wait-Task -Task $Task | Out-Null
+        Wait-Task -Task $Task -ErrorAction SilentlyContinue | Out-Null
 
 
         ## Get task result
@@ -222,7 +222,19 @@ function Import-VUMContent {
 
         ## Get task result
         if ($Task.state -ne "Success") {
-            throw ("Image import task failed with status " + $Task.State)
+
+            ## Check if the error indicates the image already exists
+            if ($task.extensiondata.info.error.localizedMessage -like "The upgrade file is already imported*") { 
+
+                Write-Verbose ("The upgrade file is already imported and can be used for upgrades.")
+                ## We can return out of this, no further action
+                return
+
+            } # if
+            else {
+                throw ("Image import task failed with status " + $Task.State)
+            } # else
+
         } # if
 
 
