@@ -133,7 +133,7 @@ function Remove-EntityBaselineGroup {
                 $reqType = New-Object IntegrityApi.RemoveBaselineGroupFromEntityRequestType
                 $reqType._this = $vumCon.vumServiceContent.RetrieveVcIntegrityContentResponse.returnval.baselineGroupManager
                 $reqType.entity = $entityObj
-                $reqType.group = 39
+                $reqType.group = $baselineGroup.key
 
 
                 $svcRefVum = New-Object IntegrityApi.RemoveBaselineGroupFromEntityRequest($reqType)
