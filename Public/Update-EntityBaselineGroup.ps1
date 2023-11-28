@@ -216,7 +216,7 @@ function Update-EntityBaselineGroup {
         ## Check if this entity is compliant with baseline group or not
         if ($complianceStatus.status -eq "Compliant") {
             Write-Verbose ("Entity is already compliant with baseline group. No further action is required.")
-            Break
+            Return
         } # if
 
 
